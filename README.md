@@ -25,6 +25,7 @@ Whether you are studying abroad or traveling, you can log expenses in one curren
 * **⚡ Ultra-Lightweight:** Optimized performance with an app size of just **~3 MB**.
 * **🔒 Privacy Focused:** 100% Offline storage. Your financial data stays on your device.
 * **📋 Custom Category:** You can add your custom category and items under that category (eg. Insurance).
+* **💸 Payment Options:** Select from Cash, Card/UPI and Cheque options as per you need per transaction.
 
 ## 🛠️ Tech Stack
 
