@@ -23,14 +23,6 @@ Whether you are studying abroad or traveling, you can log expenses in one curren
 * **⚡ Ultra-Lightweight:** Optimized performance with an app size of just **~3 MB**.
 * **🔒 Privacy Focused:** 100% Offline storage. Your financial data stays on your device.
 
-## 📸 Screenshots
-
-| Dashboard | Add Expense | PDF Report |
-|:---------:|:-----------:|:----------:|
-| <img src="https://via.placeholder.com/200x400?text=Home+Screen" width="200"> | <img src="https://via.placeholder.com/200x400?text=Add+Entry" width="200"> | <img src="https://via.placeholder.com/200x400?text=PDF+Export" width="200"> |
-
-*(Note: Upload your actual screenshots to the repo and replace the links above)*
-
 ## 🛠️ Tech Stack
 
 * **Language:** Kotlin
