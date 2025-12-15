@@ -181,9 +181,12 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    // ... inside ExpenseViewModel class ...
+
     fun addExpense(
         date: Long, personName: String, openingBal: String, category: String,
-        itemName: String, qty: String, unit: UnitType, price: String, type: TransactionType
+        itemName: String, qty: String, unit: UnitType, price: String, type: TransactionType,
+        paymentMode: String // <--- NEW PARAMETER
     ) {
         viewModelScope.launch {
             val validQty = qty.toDoubleOrNull() ?: 0.0
@@ -193,7 +196,8 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             val expense = ExpenseItem(
                 date = date, day = getDayFromDate(date), personName = personName, openingBalance = validOpening,
                 category = category, itemName = itemName, quantity = validQty, unit = unit,
-                pricePerUnit = validPrice, totalPrice = validPrice, type = type
+                pricePerUnit = validPrice, totalPrice = validPrice, type = type,
+                paymentMode = paymentMode // <--- SAVE IT
             )
             dao.insertExpense(expense)
         }
@@ -202,7 +206,8 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
     fun addAccountTx(
         date: Long, holder: String, bank: String, accNum: String,
         beneficiary: String, toBank: String, toAccNum: String,
-        amount: String, type: TransactionType
+        amount: String, type: TransactionType,
+        paymentMode: String // <--- NEW PARAMETER
     ) {
         viewModelScope.launch {
             val validAmount = amount.toDoubleOrNull() ?: 0.0
@@ -210,7 +215,8 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
                 date = date, day = getDayFromDate(date),
                 accountHolder = holder, bankName = bank, accountNumber = accNum,
                 beneficiaryName = beneficiary, toBankName = toBank, toAccountNumber = toAccNum,
-                amount = validAmount, type = type
+                amount = validAmount, type = type,
+                paymentMode = paymentMode // <--- SAVE IT
             )
             dao.insertAccountTx(tx)
         }

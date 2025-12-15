@@ -53,6 +53,10 @@ fun AccountScreen(viewModel: ExpenseViewModel) {
     var amount by remember { mutableStateOf("") }
     var selectedType by remember { mutableStateOf(TransactionType.DEBIT) }
 
+    // --- NEW: Payment Mode State ---
+    var selectedPaymentMode by remember { mutableStateOf("Cash") }
+    val paymentOptions = listOf("Cash", "Cheque", "Card/UPI")
+
     val dateFormatter = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
 
     LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
@@ -146,6 +150,23 @@ fun AccountScreen(viewModel: ExpenseViewModel) {
                 }
             }
 
+            // --- NEW: Payment Mode Radio Buttons ---
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Payment Mode:", style = MaterialTheme.typography.labelMedium)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                paymentOptions.forEach { option ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { selectedPaymentMode = option }) {
+                        RadioButton(
+                            selected = (option == selectedPaymentMode),
+                            onClick = { selectedPaymentMode = option }
+                        )
+                        Text(text = option, style = MaterialTheme.typography.bodySmall)
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                }
+            }
+            // ----------------------------------------
+
             Spacer(modifier = Modifier.height(8.dp))
 
             Button(
@@ -154,8 +175,15 @@ fun AccountScreen(viewModel: ExpenseViewModel) {
                         beneficiaryName.isBlank() || toBankName.isBlank() || toAccountNumber.isBlank() || amount.isBlank()) {
                         Toast.makeText(context, "All fields are mandatory", Toast.LENGTH_SHORT).show()
                     } else {
-                        viewModel.addAccountTx(selectedDate, holderName, bankName, accNumber, beneficiaryName, toBankName, toAccountNumber, amount, selectedType)
+                        // Pass the selectedPaymentMode here
+                        viewModel.addAccountTx(
+                            selectedDate, holderName, bankName, accNumber,
+                            beneficiaryName, toBankName, toAccountNumber,
+                            amount, selectedType, selectedPaymentMode
+                        )
                         amount = ""
+                        // Optional: Reset mode or keep it
+                        selectedPaymentMode = "Cash"
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -185,7 +213,8 @@ fun AccountRow(tx: AccountTransaction, currency: String) {
         Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(tx.beneficiaryName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                Text("To: ${tx.toBankName} | Acc: ${tx.toAccountNumber}", style = MaterialTheme.typography.bodySmall)
+                // --- Updated to show Payment Mode ---
+                Text("To: ${tx.toBankName} | Acc: ${tx.toAccountNumber} | [${tx.paymentMode}]", style = MaterialTheme.typography.bodySmall)
             }
             Text(text = "${if(tx.type == TransactionType.CREDIT) "+" else "-"} $currency ${tx.amount}", color = if(tx.type == TransactionType.CREDIT) Color.Green else Color.Black, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
         }

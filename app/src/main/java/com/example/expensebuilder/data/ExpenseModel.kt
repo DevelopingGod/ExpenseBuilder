@@ -24,7 +24,8 @@ data class ExpenseItem(
     val unit: UnitType,
     val pricePerUnit: Double,
     val totalPrice: Double,
-    val type: TransactionType
+    val type: TransactionType,
+    val paymentMode: String // "Cash", "Cheque", or "Card/UPI"
 )
 
 @Entity(tableName = "accounts")
@@ -44,5 +45,7 @@ data class AccountTransaction(
     val toAccountNumber: String,
 
     val amount: Double,
-    val type: TransactionType
+    val type: TransactionType,
+
+    val paymentMode: String // "Cash", "Cheque", or "Card/UPI"
 )

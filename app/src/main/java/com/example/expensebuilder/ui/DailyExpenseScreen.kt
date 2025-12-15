@@ -229,6 +229,10 @@ fun ExpenseInputForm(
     var selectedUnit by remember { mutableStateOf(UnitType.PIECE) }
     var selectedType by remember { mutableStateOf(TransactionType.DEBIT) }
 
+    // --- NEW STATE FOR PAYMENT MODE ---
+    var selectedPaymentMode by remember { mutableStateOf("Cash") }
+    val paymentOptions = listOf("Cash", "Cheque", "Card/UPI")
+
     var catExpanded by remember { mutableStateOf(false) }
     var unitExpanded by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -255,6 +259,8 @@ fun ExpenseInputForm(
         }
 
         OutlinedTextField(value = itemName, onValueChange = { itemName = it; viewModel.fetchSuggestions(category, it) }, label = { Text("Item Name") }, modifier = Modifier.fillMaxWidth())
+
+        // Suggestion Chips
         if (suggestions.isNotEmpty()) {
             Row(modifier = Modifier.padding(4.dp)) {
                 suggestions.take(3).forEach { s ->
@@ -283,21 +289,42 @@ fun ExpenseInputForm(
             Text(if(selectedType == TransactionType.CREDIT) "Credit" else "Debit", color = if(selectedType == TransactionType.CREDIT) Color.Green else Color.Black)
         }
 
+        // --- NEW RADIO BUTTONS FOR PAYMENT MODE ---
+        Text("Payment Mode:", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 8.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            paymentOptions.forEach { option ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { selectedPaymentMode = option }) {
+                    RadioButton(
+                        selected = (option == selectedPaymentMode),
+                        onClick = { selectedPaymentMode = option }
+                    )
+                    Text(text = option, style = MaterialTheme.typography.bodySmall)
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
+            }
+        }
+        // -------------------------------------------
+
         Button(
             onClick = {
                 if(personName.isBlank() || openingBalanceState.value.isBlank() || category.isBlank() || itemName.isBlank() || quantity.isBlank() || price.isBlank()) {
                     Toast.makeText(context, "All fields are mandatory", Toast.LENGTH_SHORT).show()
                 } else {
-                    viewModel.addExpense(selectedDate, personName, openingBalanceState.value, category, itemName, quantity, selectedUnit, price, selectedType)
-                    // Clear inputs (except person/opening balance)
+                    // PASS THE PAYMENT MODE HERE
+                    viewModel.addExpense(
+                        selectedDate, personName, openingBalanceState.value, category,
+                        itemName, quantity, selectedUnit, price, selectedType, selectedPaymentMode
+                    )
+                    // Clear inputs
                     itemName = ""; quantity = ""; price = ""
+                    // Reset mode to Cash (Optional)
+                    selectedPaymentMode = "Cash"
                 }
             },
             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
         ) { Text("ADD") }
     }
 }
-
 @Composable
 fun SummaryCard(summary: BalanceSummary, base: String, target: String, rate: Double) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer), modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
@@ -338,7 +365,8 @@ fun ExpenseRow(item: ExpenseItem, currency: String, onDelete: () -> Unit) {
         Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(item.itemName, style = MaterialTheme.typography.titleMedium, color = if (item.type == TransactionType.CREDIT) Color.Green else Color.Black, fontWeight = FontWeight.Bold)
-                Text("${item.category} | ${item.quantity} ${item.unit} | $currency ${item.pricePerUnit}", style = MaterialTheme.typography.bodySmall)
+                // ADDED MODE DISPLAY HERE
+                Text("${item.category} | ${item.quantity} ${item.unit} | ${item.paymentMode}", style = MaterialTheme.typography.bodySmall)
             }
             Text("$currency ${String.format("%.2f", item.totalPrice)}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
             IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red) }

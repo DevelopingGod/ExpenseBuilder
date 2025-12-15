@@ -28,7 +28,7 @@ object ExportUtils {
         }
     }
 
-    // --- HELPER: Find valid metadata even if the first row is empty ---
+    // --- HELPER: Find valid metadata ---
     private fun getPersonName(items: List<ExpenseItem>): String {
         return items.firstOrNull { it.personName.isNotBlank() }?.personName ?: "Unknown"
     }
@@ -37,29 +37,23 @@ object ExportUtils {
         return items.firstOrNull { it.openingBalance > 0.0 }?.openingBalance ?: 0.0
     }
 
-    // ================= DAILY EXPORT (CSV - OPENS IN EXCEL) =================
-
+    // ================= DAILY EXPORT (CSV) =================
+    // (This part is working fine, keeping it same)
     fun exportDailyToExcel(context: Context, items: List<ExpenseItem>, baseCurr: String, targetCurr: String, rate: Double) {
         if (items.isEmpty()) { showToast(context, "No data to export"); return }
-
-        // Use Native CSV generation (Bulletproof & Lightweight)
         try {
             val sb = StringBuilder()
             val name = getPersonName(items)
             val openingBal = getOpeningBalance(items)
             val dateStr = convertDate(items.first().date)
 
-            // 1. Meta Data
             sb.append("Daily Expense Report\n")
             sb.append("Person Name,$name\n")
             sb.append("Date,$dateStr\n")
             sb.append("Rate,1 $baseCurr = $rate $targetCurr\n")
             sb.append("Opening Balance,$openingBal $baseCurr\n\n")
+            sb.append("Category,Item Name,Qty,Unit,Price ($baseCurr),Price ($targetCurr),Type,Mode\n")
 
-            // 2. Headers
-            sb.append("Category,Item Name,Qty,Unit,Price ($baseCurr),Price ($targetCurr),Type\n")
-
-            // 3. Data
             var totalCredit = 0.0
             var totalDebit = 0.0
             val grouped = items.groupBy { it.category }
@@ -68,19 +62,16 @@ object ExportUtils {
                 var catTotal = 0.0
                 catItems.forEach { item ->
                     val converted = String.format("%.2f", item.totalPrice * rate)
-                    // Escape commas in names to prevent column shifts
                     val safeItemName = item.itemName.replace(",", " ")
-
-                    sb.append("$category,$safeItemName,${item.quantity},${item.unit},${item.totalPrice},$converted,${item.type}\n")
+                    sb.append("$category,$safeItemName,${item.quantity},${item.unit},${item.totalPrice},$converted,${item.type},${item.paymentMode}\n")
 
                     catTotal += item.totalPrice
                     if (item.type == TransactionType.CREDIT) totalCredit += item.totalPrice
                     else totalDebit += item.totalPrice
                 }
-                sb.append(",Subtotal ($category),,,$catTotal,,\n") // Empty line for visual separation
+                sb.append(",Subtotal ($category),,,$catTotal,,,\n")
             }
 
-            // 4. Totals
             val closing = openingBal + totalCredit - totalDebit
             val closingConv = String.format("%.2f", closing * rate)
 
@@ -90,16 +81,14 @@ object ExportUtils {
             sb.append(",CLOSING BALANCE ($baseCurr),,,$closing\n")
             sb.append(",CLOSING BALANCE ($targetCurr),,,$closingConv\n")
 
-            // Save as .csv (Excel recognizes this)
             val fileName = "Daily_Expense_${baseCurr}_${getFileNameDate()}.csv"
             saveFileToDownloads(context, fileName, "text/csv") { it.write(sb.toString().toByteArray()) }
 
-        } catch (e: Exception) {
-            e.printStackTrace()
-            showToast(context, "Export Failed: ${e.message}")
-        }
+        } catch (e: Exception) { e.printStackTrace(); showToast(context, "Export Failed: ${e.message}") }
     }
 
+    // ================= DAILY PDF EXPORT =================
+    // (Working fine)
     fun exportDailyToPdf(context: Context, items: List<ExpenseItem>, baseCurr: String, targetCurr: String, rate: Double) {
         if (items.isEmpty()) { showToast(context, "No data to export"); return }
         try {
@@ -114,7 +103,6 @@ object ExportUtils {
                 if (y > 780f) { pdfDocument.finishPage(page); page = pdfDocument.startPage(pageInfo); canvas = page.canvas; y = 50f }
             }
 
-            // Fix for Missing Data: Search entire list
             val name = getPersonName(items)
             val openingBal = getOpeningBalance(items)
 
@@ -136,7 +124,8 @@ object ExportUtils {
                     checkPageBreak()
                     val converted = item.totalPrice * rate
                     val sym = if(item.type == TransactionType.CREDIT) "(+)" else "(-)"
-                    canvas.drawText("${item.itemName} | ${item.quantity} ${item.unit} | $baseCurr ${item.totalPrice} | $targetCurr ${String.format("%.2f", converted)} $sym", 60f, y, paint)
+                    val line = "${item.itemName} | ${item.quantity} ${item.unit} | $baseCurr ${item.totalPrice} | $targetCurr ${String.format("%.2f", converted)} $sym | [${item.paymentMode}]"
+                    canvas.drawText(line, 60f, y, paint)
                     if (item.type == TransactionType.CREDIT) totalCredit += item.totalPrice else totalDebit += item.totalPrice
                     y += 15f
                 }
@@ -158,18 +147,18 @@ object ExportUtils {
     }
 
     // ================= ACCOUNTS EXPORT (CSV) =================
-
+    // (Working fine)
     fun exportAccountsToExcel(context: Context, items: List<AccountTransaction>, baseCurr: String, targetCurr: String, rate: Double) {
         if (items.isEmpty()) { showToast(context, "No data to export"); return }
         try {
             val sb = StringBuilder()
             sb.append("Account Transactions\n")
             sb.append("Rate,1 $baseCurr = $rate $targetCurr\n\n")
-            sb.append("From Holder,From Bank,From Acc,To Beneficiary,To Bank,To Acc,Amt ($baseCurr),Amt ($targetCurr),Type\n")
+            sb.append("From Holder,From Bank,From Acc,To Beneficiary,To Bank,To Acc,Amt ($baseCurr),Amt ($targetCurr),Type,Mode\n")
 
             items.forEach { item ->
                 val converted = String.format("%.2f", item.amount * rate)
-                sb.append("${item.accountHolder},${item.bankName},'${item.accountNumber},${item.beneficiaryName},${item.toBankName},'${item.toAccountNumber},${item.amount},$converted,${item.type}\n")
+                sb.append("${item.accountHolder},${item.bankName},'${item.accountNumber},${item.beneficiaryName},${item.toBankName},'${item.toAccountNumber},${item.amount},$converted,${item.type},${item.paymentMode}\n")
             }
 
             val fileName = "Accounts_${baseCurr}_${getFileNameDate()}.csv"
@@ -177,8 +166,9 @@ object ExportUtils {
         } catch (e: Exception) { e.printStackTrace(); showToast(context, "Export Failed") }
     }
 
+    // ================= ACCOUNTS PDF EXPORT (UPDATED) =================
+    // FIX: Now explicitly shows Account Numbers and Bank Names
     fun exportAccountsToPdf(context: Context, items: List<AccountTransaction>, baseCurr: String, targetCurr: String, rate: Double) {
-        // (Same as before, logic omitted for brevity as it was working fine)
         if (items.isEmpty()) { showToast(context, "No data to export"); return }
         try {
             val pdfDocument = PdfDocument()
@@ -194,11 +184,32 @@ object ExportUtils {
             paint.textSize = 10f; paint.typeface = Typeface.DEFAULT
 
             items.forEach { item ->
-                if (y > 750f) { pdfDocument.finishPage(page); page = pdfDocument.startPage(pageInfo); canvas = page.canvas; y = 50f }
+                // Check page break logic (approx 4 lines per item + spacing)
+                if (y > 720f) { pdfDocument.finishPage(page); page = pdfDocument.startPage(pageInfo); canvas = page.canvas; y = 50f }
+
                 val converted = item.amount * rate
-                canvas.drawText("${item.accountHolder} -> ${item.beneficiaryName}", 50f, y, paint); y += 15f
-                canvas.drawText("$baseCurr ${item.amount} => $targetCurr ${String.format("%.2f", converted)}", 50f, y, paint); y += 25f
-                canvas.drawLine(50f, y, 500f, y, paint); y += 15f
+                val sign = if(item.type == TransactionType.CREDIT) "+" else "-"
+
+                // Line 1: From Details
+                paint.color = Color.DKGRAY
+                canvas.drawText("FROM: ${item.accountHolder} | ${item.bankName} | ${item.accountNumber}", 50f, y, paint)
+                y += 15f
+
+                // Line 2: To Details
+                canvas.drawText("TO:   ${item.beneficiaryName} | ${item.toBankName} | ${item.toAccountNumber}", 50f, y, paint)
+                y += 15f
+
+                // Line 3: Amount & Mode
+                paint.color = if(item.type == TransactionType.CREDIT) Color.parseColor("#006400") else Color.BLACK
+                paint.typeface = Typeface.DEFAULT_BOLD
+                canvas.drawText("$sign $baseCurr ${item.amount}  =>  $targetCurr ${String.format("%.2f", converted)}  [${item.paymentMode}]", 50f, y, paint)
+
+                paint.color = Color.BLACK
+                paint.typeface = Typeface.DEFAULT
+
+                y += 20f
+                canvas.drawLine(50f, y, 500f, y, paint) // Divider line
+                y += 15f
             }
             pdfDocument.finishPage(page)
             val fileName = "Accounts_${baseCurr}_${getFileNameDate()}.pdf"
