@@ -1,0 +1,1010 @@
+MainActivity.kt
+package com.example.expensebuilder
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.viewModels
+import com.example.expensebuilder.ui.MainScreen
+import com.example.expensebuilder.viewmodel.ExpenseViewModel
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val viewModel: ExpenseViewModel by viewModels()
+        setContent {
+            MainScreen(viewModel = viewModel)
+        }
+    }
+}
+
+AppDatabase.kt
+package com.example.expensebuilder.data
+
+import android.content.Context
+import androidx.room.Database
+import androidx.room.Room
+import androidx.room.RoomDatabase
+
+@Database(entities = [ExpenseItem::class, AccountTransaction::class], version = 1, exportSchema = false)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun expenseDao(): ExpenseDao
+
+    companion object {
+        @Volatile
+        private var INSTANCE: AppDatabase? = null
+
+        fun getDatabase(context: Context): AppDatabase {
+            return INSTANCE ?: synchronized(this) {
+                val instance = Room.databaseBuilder(
+                    context.applicationContext,
+                    AppDatabase::class.java,
+                    "expense_builder_db"
+                ).build()
+                INSTANCE = instance
+                instance
+            }
+        }
+    }
+}
+
+ExpenseDao.kt
+package com.example.expensebuilder.data
+
+import androidx.room.Dao
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface ExpenseDao {
+
+    // --- Daily Expense Operations ---
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertExpense(expense: ExpenseItem)
+
+    @Delete
+    suspend fun deleteExpense(expense: ExpenseItem)
+
+    // Get expenses for a specific date
+    @Query("SELECT * FROM expenses WHERE date = :date ORDER BY id DESC")
+    fun getExpensesByDate(date: Long): Flow<List<ExpenseItem>>
+
+    // "LEARNING" FEATURES:
+    // 1. Get all unique categories ever entered (for the dropdown)
+    @Query("SELECT DISTINCT category FROM expenses ORDER BY category ASC")
+    fun getAllCategories(): Flow<List<String>>
+
+    // 2. Get unique item names based on a category (Auto-suggestion logic)
+    @Query("SELECT DISTINCT itemName FROM expenses WHERE category = :category AND itemName LIKE '%' || :query || '%'")
+    suspend fun getItemSuggestions(category: String, query: String): List<String>
+
+    // --- Account Transaction Operations ---
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAccountTx(tx: AccountTransaction)
+
+    @Query("SELECT * FROM accounts WHERE date = :date ORDER BY id DESC")
+    fun getAccountTxByDate(date: Long): Flow<List<AccountTransaction>>
+}
+
+ExpenseModel.kt
+package com.example.expensebuilder.data
+
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+
+enum class TransactionType {
+    DEBIT, CREDIT
+}
+
+enum class UnitType {
+    PIECE, KG, GRAM, LITER, ML
+}
+
+@Entity(tableName = "expenses")
+data class ExpenseItem(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val date: Long,
+    val day: String,
+    val personName: String,
+    val openingBalance: Double,
+    val category: String,
+    val itemName: String,
+    val quantity: Double,
+    val unit: UnitType,
+    val pricePerUnit: Double,
+    val totalPrice: Double,
+    val type: TransactionType
+)
+
+@Entity(tableName = "accounts")
+data class AccountTransaction(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val date: Long,
+    val day: String,
+
+    // FROM details
+    val accountHolder: String,
+    val bankName: String,
+    val accountNumber: String,
+
+    // TO details (New Fields)
+    val beneficiaryName: String,
+    val toBankName: String,
+    val toAccountNumber: String,
+
+    val amount: Double,
+    val type: TransactionType
+)
+
+AccountScreen.kt
+package com.example.expensebuilder.ui
+
+import android.app.DatePickerDialog
+import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import com.example.expensebuilder.data.AccountTransaction
+import com.example.expensebuilder.data.TransactionType
+import com.example.expensebuilder.utils.ExportUtils
+import com.example.expensebuilder.viewmodel.ExpenseViewModel
+import java.text.SimpleDateFormat
+import java.util.*
+
+@Composable
+fun AccountScreen(viewModel: ExpenseViewModel) {
+    val context = LocalContext.current
+    val selectedDate by viewModel.selectedDate.collectAsState()
+    val accountList by viewModel.currentAccountTx.collectAsState(initial = emptyList())
+
+    // FROM Fields
+    var holderName by remember { mutableStateOf("") }
+    var bankName by remember { mutableStateOf("") }
+    var accNumber by remember { mutableStateOf("") }
+
+    // TO Fields
+    var beneficiaryName by remember { mutableStateOf("") }
+    var toBankName by remember { mutableStateOf("") }
+    var toAccountNumber by remember { mutableStateOf("") }
+
+    var amount by remember { mutableStateOf("") }
+    var selectedType by remember { mutableStateOf(TransactionType.DEBIT) }
+
+    val dateFormatter = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+
+        item {
+            Text("Accounts", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small)
+                    .clickable {
+                        val calendar = Calendar.getInstance()
+                        calendar.timeInMillis = selectedDate
+                        DatePickerDialog(context, { _, y, m, d ->
+                            val newCal = Calendar.getInstance()
+                            newCal.set(y, m, d)
+                            viewModel.updateDate(newCal.timeInMillis)
+                        }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
+                    }
+                    .padding(16.dp)
+            ) {
+                Icon(Icons.Default.CalendarToday, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("${dateFormatter.format(Date(selectedDate))} (${getDayName(selectedDate)})")
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        // --- INPUT FORM ---
+        item {
+            Text("From (Sender)", fontWeight = FontWeight.Bold, color = Color.Gray)
+            OutlinedTextField(value = holderName, onValueChange = { holderName = it }, label = { Text("Account Holder Name") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = bankName, onValueChange = { bankName = it }, label = { Text("Bank Name") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = accNumber, onValueChange = { accNumber = it }, label = { Text("Account Number") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+
+            Spacer(Modifier.height(16.dp))
+            Text("To (Beneficiary)", fontWeight = FontWeight.Bold, color = Color.Gray)
+            OutlinedTextField(value = beneficiaryName, onValueChange = { beneficiaryName = it }, label = { Text("Beneficiary Account Name") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = toBankName, onValueChange = { toBankName = it }, label = { Text("Beneficiary Bank Name") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = toAccountNumber, onValueChange = { toAccountNumber = it }, label = { Text("Beneficiary Account Number") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(value = amount, onValueChange = { amount = it }, label = { Text("Amount") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Switch(checked = selectedType == TransactionType.CREDIT, onCheckedChange = { selectedType = if (it) TransactionType.CREDIT else TransactionType.DEBIT })
+                    Text(text = if(selectedType == TransactionType.CREDIT) "Credit" else "Debit", color = if(selectedType == TransactionType.CREDIT) Color.Green else Color.Black, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Button(
+                onClick = {
+                    // Validation
+                    if (holderName.isBlank() || bankName.isBlank() || accNumber.isBlank() ||
+                        beneficiaryName.isBlank() || toBankName.isBlank() || toAccountNumber.isBlank() || amount.isBlank()) {
+                        Toast.makeText(context, "All fields are mandatory", Toast.LENGTH_SHORT).show()
+                    } else {
+                        viewModel.addAccountTx(selectedDate, holderName, bankName, accNumber, beneficiaryName, toBankName, toAccountNumber, amount, selectedType)
+                        amount = ""
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("ADD TRANSACTION") }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+        }
+
+        // --- TRANSACTION LIST ---
+        items(accountList) { tx -> AccountRow(tx) }
+
+        // --- FOOTER & EXPORT ---
+        item {
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                Button(onClick = { ExportUtils.exportAccountsToExcel(context, accountList) }) { Text("Excel") }
+                Button(onClick = { ExportUtils.exportAccountsToPdf(context, accountList) }) { Text("PDF") }
+            }
+            Spacer(modifier = Modifier.height(50.dp))
+        }
+    }
+}
+
+@Composable
+fun AccountRow(tx: AccountTransaction) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(2.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(tx.beneficiaryName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                Text("To: ${tx.toBankName} | Acc: ${tx.toAccountNumber}", style = MaterialTheme.typography.bodySmall)
+            }
+            Text(text = "${if(tx.type == TransactionType.CREDIT) "+" else "-"} ₹${tx.amount}", color = if(tx.type == TransactionType.CREDIT) Color.Green else Color.Black, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+        }
+    }
+}package com.example.expensebuilder.ui
+
+import android.app.DatePickerDialog
+import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import com.example.expensebuilder.data.AccountTransaction
+import com.example.expensebuilder.data.TransactionType
+import com.example.expensebuilder.utils.ExportUtils
+import com.example.expensebuilder.viewmodel.ExpenseViewModel
+import java.text.SimpleDateFormat
+import java.util.*
+
+@Composable
+fun AccountScreen(viewModel: ExpenseViewModel) {
+    val context = LocalContext.current
+    val selectedDate by viewModel.selectedDate.collectAsState()
+    val accountList by viewModel.currentAccountTx.collectAsState(initial = emptyList())
+
+    // FROM Fields
+    var holderName by remember { mutableStateOf("") }
+    var bankName by remember { mutableStateOf("") }
+    var accNumber by remember { mutableStateOf("") }
+
+    // TO Fields
+    var beneficiaryName by remember { mutableStateOf("") }
+    var toBankName by remember { mutableStateOf("") }
+    var toAccountNumber by remember { mutableStateOf("") }
+
+    var amount by remember { mutableStateOf("") }
+    var selectedType by remember { mutableStateOf(TransactionType.DEBIT) }
+
+    val dateFormatter = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+
+        item {
+            Text("Accounts", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small)
+                    .clickable {
+                        val calendar = Calendar.getInstance()
+                        calendar.timeInMillis = selectedDate
+                        DatePickerDialog(context, { _, y, m, d ->
+                            val newCal = Calendar.getInstance()
+                            newCal.set(y, m, d)
+                            viewModel.updateDate(newCal.timeInMillis)
+                        }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
+                    }
+                    .padding(16.dp)
+            ) {
+                Icon(Icons.Default.CalendarToday, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("${dateFormatter.format(Date(selectedDate))} (${getDayName(selectedDate)})")
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        // --- INPUT FORM ---
+        item {
+            Text("From (Sender)", fontWeight = FontWeight.Bold, color = Color.Gray)
+            OutlinedTextField(value = holderName, onValueChange = { holderName = it }, label = { Text("Account Holder Name") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = bankName, onValueChange = { bankName = it }, label = { Text("Bank Name") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = accNumber, onValueChange = { accNumber = it }, label = { Text("Account Number") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+
+            Spacer(Modifier.height(16.dp))
+            Text("To (Beneficiary)", fontWeight = FontWeight.Bold, color = Color.Gray)
+            OutlinedTextField(value = beneficiaryName, onValueChange = { beneficiaryName = it }, label = { Text("Beneficiary Account Name") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = toBankName, onValueChange = { toBankName = it }, label = { Text("Beneficiary Bank Name") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = toAccountNumber, onValueChange = { toAccountNumber = it }, label = { Text("Beneficiary Account Number") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(value = amount, onValueChange = { amount = it }, label = { Text("Amount") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Switch(checked = selectedType == TransactionType.CREDIT, onCheckedChange = { selectedType = if (it) TransactionType.CREDIT else TransactionType.DEBIT })
+                    Text(text = if(selectedType == TransactionType.CREDIT) "Credit" else "Debit", color = if(selectedType == TransactionType.CREDIT) Color.Green else Color.Black, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Button(
+                onClick = {
+                    // Validation
+                    if (holderName.isBlank() || bankName.isBlank() || accNumber.isBlank() ||
+                        beneficiaryName.isBlank() || toBankName.isBlank() || toAccountNumber.isBlank() || amount.isBlank()) {
+                        Toast.makeText(context, "All fields are mandatory", Toast.LENGTH_SHORT).show()
+                    } else {
+                        viewModel.addAccountTx(selectedDate, holderName, bankName, accNumber, beneficiaryName, toBankName, toAccountNumber, amount, selectedType)
+                        amount = ""
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("ADD TRANSACTION") }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+        }
+
+        // --- TRANSACTION LIST ---
+        items(accountList) { tx -> AccountRow(tx) }
+
+        // --- FOOTER & EXPORT ---
+        item {
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                Button(onClick = { ExportUtils.exportAccountsToExcel(context, accountList) }) { Text("Excel") }
+                Button(onClick = { ExportUtils.exportAccountsToPdf(context, accountList) }) { Text("PDF") }
+            }
+            Spacer(modifier = Modifier.height(50.dp))
+        }
+    }
+}
+
+@Composable
+fun AccountRow(tx: AccountTransaction) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(2.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(tx.beneficiaryName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                Text("To: ${tx.toBankName} | Acc: ${tx.toAccountNumber}", style = MaterialTheme.typography.bodySmall)
+            }
+            Text(text = "${if(tx.type == TransactionType.CREDIT) "+" else "-"} ₹${tx.amount}", color = if(tx.type == TransactionType.CREDIT) Color.Green else Color.Black, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+        }
+    }
+}
+
+DailyExpenseScreen.kt
+package com.example.expensebuilder.ui
+
+import android.app.DatePickerDialog
+import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import com.example.expensebuilder.data.ExpenseItem
+import com.example.expensebuilder.data.TransactionType
+import com.example.expensebuilder.data.UnitType
+import com.example.expensebuilder.utils.ExportUtils
+import com.example.expensebuilder.viewmodel.ExpenseViewModel
+import java.text.SimpleDateFormat
+import java.util.*
+
+@Composable
+fun MainScreen(viewModel: ExpenseViewModel) {
+    var selectedTab by remember { mutableIntStateOf(0) }
+    val tabs = listOf("Daily Expense", "Accounts")
+
+    Scaffold(
+        bottomBar = {
+            NavigationBar {
+                tabs.forEachIndexed { index, title ->
+                    NavigationBarItem(
+                        selected = selectedTab == index,
+                        onClick = { selectedTab = index },
+                        icon = {
+                            // 1] Icons Update: Calendar for Daily, Person for Accounts
+                            Icon(if(index == 0) Icons.Default.CalendarToday else Icons.Default.Person, contentDescription = null)
+                        },
+                        label = { Text(title) }
+                    )
+                }
+            }
+        }
+    ) { innerPadding ->
+        Box(modifier = Modifier.padding(innerPadding)) {
+            if (selectedTab == 0) DailyExpenseScreen(viewModel) else AccountScreen(viewModel)
+        }
+    }
+}
+
+@Composable
+fun DailyExpenseScreen(viewModel: ExpenseViewModel) {
+    val context = LocalContext.current
+    val selectedDate by viewModel.selectedDate.collectAsState()
+    val expenseList by viewModel.currentExpenses.collectAsState(initial = emptyList())
+    val categories by viewModel.savedCategories.collectAsState(initial = emptyList())
+    val suggestions by viewModel.itemSuggestions.collectAsState()
+
+    var personName by remember { mutableStateOf("") }
+    var openingBalance by remember { mutableStateOf("") }
+    var category by remember { mutableStateOf("") }
+    var itemName by remember { mutableStateOf("") }
+    var quantity by remember { mutableStateOf("") }
+    var price by remember { mutableStateOf("") }
+    var selectedUnit by remember { mutableStateOf(UnitType.PIECE) }
+    var selectedType by remember { mutableStateOf(TransactionType.DEBIT) }
+
+    var catExpanded by remember { mutableStateOf(false) }
+    var unitExpanded by remember { mutableStateOf(false) }
+    val dateFormatter = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        item {
+            Text("Daily Expense", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Date Picker
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small)
+                    .clickable {
+                        val calendar = Calendar.getInstance()
+                        calendar.timeInMillis = selectedDate
+                        DatePickerDialog(context, { _, y, m, d ->
+                            val newCal = Calendar.getInstance()
+                            newCal.set(y, m, d)
+                            viewModel.updateDate(newCal.timeInMillis)
+                        }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
+                    }
+                    .padding(16.dp)
+            ) {
+                Icon(Icons.Default.CalendarToday, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("${dateFormatter.format(Date(selectedDate))} (${getDayName(selectedDate)})")
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+            OutlinedTextField(value = personName, onValueChange = { personName = it }, label = { Text("Person Name") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(value = openingBalance, onValueChange = { openingBalance = it }, label = { Text("Opening Balance") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+
+            Box(modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = category, onValueChange = { category = it }, label = { Text("Category") }, modifier = Modifier.fillMaxWidth(),
+                    trailingIcon = { Icon(Icons.Default.ArrowDropDown, "Select", Modifier.clickable { catExpanded = true }) }
+                )
+                DropdownMenu(expanded = catExpanded, onDismissRequest = { catExpanded = false }) {
+                    categories.forEach { cat -> DropdownMenuItem(text = { Text(cat) }, onClick = { category = cat; catExpanded = false }) }
+                }
+            }
+
+            OutlinedTextField(value = itemName, onValueChange = { itemName = it; viewModel.fetchSuggestions(category, it) }, label = { Text("Item Name") }, modifier = Modifier.fillMaxWidth())
+            if (suggestions.isNotEmpty()) {
+                suggestions.take(3).forEach { s ->
+                    Text(s, modifier = Modifier.fillMaxWidth().clickable { itemName = s; viewModel.fetchSuggestions(category, "") }.padding(8.dp).background(Color.LightGray.copy(alpha=0.3f)))
+                }
+            }
+
+            Row(Modifier.fillMaxWidth()) {
+                OutlinedTextField(value = quantity, onValueChange = { quantity = it }, label = { Text("Qty") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                Spacer(Modifier.width(4.dp))
+                Box(Modifier.weight(0.8f)) {
+                    OutlinedTextField(value = selectedUnit.name, onValueChange = {}, readOnly = true, label = { Text("Unit") }, trailingIcon = { Icon(Icons.Default.ArrowDropDown, null, Modifier.clickable { unitExpanded = true }) })
+                    DropdownMenu(expanded = unitExpanded, onDismissRequest = { unitExpanded = false }) {
+                        UnitType.values().forEach { u -> DropdownMenuItem(text = { Text(u.name) }, onClick = { selectedUnit = u; unitExpanded = false }) }
+                    }
+                }
+            }
+
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(value = price, onValueChange = { price = it }, label = { Text("Price (Total)") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                Spacer(Modifier.width(8.dp))
+                Switch(checked = selectedType == TransactionType.CREDIT, onCheckedChange = { selectedType = if (it) TransactionType.CREDIT else TransactionType.DEBIT })
+                Text(if(selectedType == TransactionType.CREDIT) "Credit" else "Debit", color = if(selectedType == TransactionType.CREDIT) Color.Green else Color.Black)
+            }
+
+            Button(
+                onClick = {
+                    // 3] Validation Logic
+                    if(personName.isBlank() || openingBalance.isBlank() || category.isBlank() || itemName.isBlank() || quantity.isBlank() || price.isBlank()) {
+                        Toast.makeText(context, "All fields are mandatory", Toast.LENGTH_SHORT).show()
+                    } else {
+                        viewModel.addExpense(selectedDate, personName, openingBalance, category, itemName, quantity, selectedUnit, price, selectedType)
+                        itemName = ""; quantity = ""; price = ""
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+            ) { Text("ADD") }
+            HorizontalDivider()
+        }
+
+        items(expenseList) { item -> ExpenseRow(item) { viewModel.deleteExpense(item) } }
+
+        item {
+            var total = 0.0
+            expenseList.forEach { if(it.type == TransactionType.DEBIT) total += it.totalPrice else total -= it.totalPrice }
+            Spacer(Modifier.height(16.dp))
+            Text("Gross Total: ₹$total", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                Button(onClick = { ExportUtils.exportDailyToExcel(context, expenseList) }) { Text("Excel") }
+                Button(onClick = { ExportUtils.exportDailyToPdf(context, expenseList) }) { Text("PDF") }
+            }
+            Spacer(Modifier.height(50.dp))
+        }
+    }
+}
+
+@Composable
+fun ExpenseRow(item: ExpenseItem, onDelete: () -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(2.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(item.itemName, style = MaterialTheme.typography.titleMedium, color = if (item.type == TransactionType.CREDIT) Color.Green else Color.Black, fontWeight = FontWeight.Bold)
+                Text("${item.category} | ${item.quantity} ${item.unit} | ₹${item.pricePerUnit}", style = MaterialTheme.typography.bodySmall)
+            }
+            Text("₹${String.format("%.2f", item.totalPrice)}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+            IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red) }
+        }
+    }
+}
+
+fun getDayName(date: Long): String = SimpleDateFormat("EEEE", Locale.getDefault()).format(Date(date))
+
+ExportUtils.kt
+package com.example.expensebuilder.utils
+
+import android.content.ContentValues
+import android.content.Context
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
+import android.graphics.pdf.PdfDocument
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.widget.Toast
+import com.example.expensebuilder.data.AccountTransaction
+import com.example.expensebuilder.data.ExpenseItem
+import com.example.expensebuilder.data.TransactionType
+import org.apache.poi.xssf.usermodel.XSSFWorkbook
+import java.io.OutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+object ExportUtils {
+
+    // ================= DAILY EXPENSE EXPORT =================
+
+    fun exportDailyToExcel(context: Context, items: List<ExpenseItem>) {
+        if (items.isEmpty()) { Toast.makeText(context, "No data to export", Toast.LENGTH_SHORT).show(); return }
+        try {
+            val workbook = XSSFWorkbook()
+            val sheet = workbook.createSheet("Daily Expenses")
+            var rowIdx = 0
+
+            // Top Meta Data
+            val firstItem = items.first()
+            val metaRows = listOf(
+                "Person Name" to firstItem.personName,
+                "Date" to convertDate(firstItem.date),
+                "Opening Balance" to "Rs. ${firstItem.openingBalance}"
+            )
+            metaRows.forEach { (key, value) ->
+                val row = sheet.createRow(rowIdx++)
+                row.createCell(0).setCellValue(key)
+                row.createCell(1).setCellValue(value)
+            }
+            rowIdx++ // Spacer
+
+            // Group by Category
+            val grouped = items.groupBy { it.category }
+            var grandTotal = 0.0
+
+            grouped.forEach { (category, catItems) ->
+                // Category Header
+                val catRow = sheet.createRow(rowIdx++)
+                catRow.createCell(0).setCellValue("Category: $category")
+
+                // Headers
+                val headerRow = sheet.createRow(rowIdx++)
+                listOf("Item Name", "Qty", "Unit", "Price").forEachIndexed { i, t -> headerRow.createCell(i).setCellValue(t) }
+
+                var catTotal = 0.0
+                catItems.forEach { item ->
+                    val row = sheet.createRow(rowIdx++)
+                    row.createCell(0).setCellValue(item.itemName)
+                    row.createCell(1).setCellValue(item.quantity)
+                    row.createCell(2).setCellValue(item.unit.name)
+                    row.createCell(3).setCellValue(item.totalPrice)
+                    catTotal += item.totalPrice
+                }
+
+                // Category Subtotal
+                val subTotalRow = sheet.createRow(rowIdx++)
+                subTotalRow.createCell(2).setCellValue("Subtotal:")
+                subTotalRow.createCell(3).setCellValue(catTotal)
+                grandTotal += catTotal
+                rowIdx++ // Spacer
+            }
+
+            // Grand Total
+            val totalRow = sheet.createRow(rowIdx++)
+            totalRow.createCell(2).setCellValue("GRAND TOTAL:")
+            totalRow.createCell(3).setCellValue(grandTotal)
+
+            saveFileToDownloads(context, "Daily_Expense_${System.currentTimeMillis()}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") { workbook.write(it) }
+
+        } catch (e: Exception) { e.printStackTrace(); Toast.makeText(context, "Excel Failed", Toast.LENGTH_SHORT).show() }
+    }
+
+    fun exportDailyToPdf(context: Context, items: List<ExpenseItem>) {
+        if (items.isEmpty()) { Toast.makeText(context, "No data to export", Toast.LENGTH_SHORT).show(); return }
+        try {
+            val pdfDocument = PdfDocument()
+            val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
+            var page = pdfDocument.startPage(pageInfo)
+            var canvas = page.canvas
+            val paint = Paint()
+            var y = 50f
+
+            fun checkPageBreak() {
+                if (y > 780f) {
+                    pdfDocument.finishPage(page)
+                    page = pdfDocument.startPage(pageInfo)
+                    canvas = page.canvas
+                    y = 50f
+                }
+            }
+
+            // 1. Meta Data
+            val firstItem = items.first()
+            paint.textSize = 14f
+            paint.typeface = Typeface.DEFAULT_BOLD
+            canvas.drawText("Person Name: ${firstItem.personName}", 50f, y, paint); y += 20f
+            canvas.drawText("Date: ${convertDate(firstItem.date)}", 50f, y, paint); y += 20f
+            canvas.drawText("Opening Balance: Rs. ${firstItem.openingBalance}", 50f, y, paint); y += 30f
+
+            val grouped = items.groupBy { it.category }
+            var grandTotal = 0.0
+
+            grouped.forEach { (category, catItems) ->
+                checkPageBreak()
+                // Category Header
+                paint.color = Color.BLUE
+                paint.textSize = 16f
+                canvas.drawText("Category: $category", 50f, y, paint)
+                y += 25f
+
+                // Items
+                paint.color = Color.BLACK
+                paint.textSize = 12f
+                var catTotal = 0.0
+
+                catItems.forEach { item ->
+                    checkPageBreak()
+                    val line = "${item.itemName}  |  ${item.quantity} ${item.unit}  |  Rs. ${item.totalPrice}"
+                    canvas.drawText(line, 70f, y, paint)
+                    catTotal += item.totalPrice
+                    y += 20f
+                }
+
+                // Subtotal
+                checkPageBreak()
+                paint.typeface = Typeface.DEFAULT_BOLD
+                canvas.drawText("Subtotal ($category): Rs. $catTotal", 70f, y, paint)
+                grandTotal += catTotal
+                y += 30f
+                paint.typeface = Typeface.DEFAULT // Reset
+            }
+
+            // Grand Total
+            checkPageBreak()
+            y += 10f
+            paint.textSize = 18f
+            paint.typeface = Typeface.DEFAULT_BOLD
+            canvas.drawText("GRAND TOTAL: Rs. $grandTotal", 50f, y, paint)
+
+            pdfDocument.finishPage(page)
+            saveFileToDownloads(context, "Daily_Expense_${System.currentTimeMillis()}.pdf", "application/pdf") { pdfDocument.writeTo(it) }
+            pdfDocument.close()
+
+        } catch (e: Exception) { e.printStackTrace(); Toast.makeText(context, "PDF Failed", Toast.LENGTH_SHORT).show() }
+    }
+
+    // ================= ACCOUNTS EXPORT =================
+
+    fun exportAccountsToExcel(context: Context, items: List<AccountTransaction>) {
+        if (items.isEmpty()) { Toast.makeText(context, "No data to export", Toast.LENGTH_SHORT).show(); return }
+        try {
+            val workbook = XSSFWorkbook()
+            val sheet = workbook.createSheet("Accounts")
+            val headerRow = sheet.createRow(0)
+            val headers = listOf("Holder(From)", "Beneficiary(To)", "Bank(From)", "Bank(To)", "Acc(From)", "Acc(To)", "Amount", "Type")
+            headers.forEachIndexed { i, t -> headerRow.createCell(i).setCellValue(t) }
+
+            items.forEachIndexed { index, item ->
+                val row = sheet.createRow(index + 1)
+                row.createCell(0).setCellValue(item.accountHolder)
+                row.createCell(1).setCellValue(item.beneficiaryName)
+                row.createCell(2).setCellValue(item.bankName)
+                row.createCell(3).setCellValue(item.toBankName)
+                row.createCell(4).setCellValue(item.accountNumber)
+                row.createCell(5).setCellValue(item.toAccountNumber)
+                row.createCell(6).setCellValue(item.amount)
+                row.createCell(7).setCellValue(item.type.name)
+            }
+            saveFileToDownloads(context, "Accounts_${System.currentTimeMillis()}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") { workbook.write(it) }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    fun exportAccountsToPdf(context: Context, items: List<AccountTransaction>) {
+        if (items.isEmpty()) { Toast.makeText(context, "No data to export", Toast.LENGTH_SHORT).show(); return }
+        try {
+            val pdfDocument = PdfDocument()
+            val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
+            var page = pdfDocument.startPage(pageInfo)
+            var canvas = page.canvas
+            val paint = Paint()
+            var y = 50f
+
+            paint.textSize = 18f
+            paint.typeface = Typeface.DEFAULT_BOLD
+            canvas.drawText("Account Transactions", 50f, y, paint)
+            y += 40f
+
+            paint.textSize = 10f
+            paint.typeface = Typeface.DEFAULT
+
+            items.forEach { item ->
+                if (y > 750f) {
+                    pdfDocument.finishPage(page)
+                    page = pdfDocument.startPage(pageInfo)
+                    canvas = page.canvas
+                    y = 50f
+                }
+
+                val fromTxt = "FROM: ${item.accountHolder} | ${item.bankName} | ${item.accountNumber}"
+                val toTxt = "TO: ${item.beneficiaryName} | ${item.toBankName} | ${item.toAccountNumber}"
+                val amtTxt = "Amount: Rs. ${item.amount} (${item.type})"
+
+                canvas.drawText(fromTxt, 50f, y, paint); y += 15f
+                canvas.drawText(toTxt, 50f, y, paint); y += 15f
+
+                paint.typeface = Typeface.DEFAULT_BOLD
+                paint.color = if(item.type == TransactionType.CREDIT) Color.parseColor("#006400") else Color.BLACK
+                canvas.drawText(amtTxt, 50f, y, paint)
+                paint.color = Color.BLACK
+                paint.typeface = Typeface.DEFAULT
+
+                y += 25f
+                canvas.drawLine(50f, y, 500f, y, paint) // Divider
+                y += 15f
+            }
+
+            pdfDocument.finishPage(page)
+            saveFileToDownloads(context, "Accounts_${System.currentTimeMillis()}.pdf", "application/pdf") { pdfDocument.writeTo(it) }
+            pdfDocument.close()
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    // --- SHARED HELPERS ---
+    private fun saveFileToDownloads(context: Context, fileName: String, mimeType: String, writeBlock: (OutputStream) -> Unit) {
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+        }
+        val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MediaStore.Downloads.EXTERNAL_CONTENT_URI else MediaStore.Files.getContentUri("external")
+        val uri = context.contentResolver.insert(collection, contentValues)
+        if (uri != null) {
+            context.contentResolver.openOutputStream(uri)?.use { writeBlock(it) }
+            Toast.makeText(context, "Saved: $fileName", Toast.LENGTH_LONG).show()
+        } else {
+            Toast.makeText(context, "Failed to save", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun convertDate(timestamp: Long): String = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(timestamp))
+}
+
+ExpenseViewModel.kt
+package com.example.expensebuilder.viewmodel
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.expensebuilder.data.AccountTransaction
+import com.example.expensebuilder.data.AppDatabase
+import com.example.expensebuilder.data.ExpenseItem
+import com.example.expensebuilder.data.TransactionType
+import com.example.expensebuilder.data.UnitType
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import java.util.Calendar
+
+class ExpenseViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val dao = AppDatabase.getDatabase(application).expenseDao()
+
+    // --- STATE MANAGEMENT ---
+    private val _selectedDate = MutableStateFlow(getTodayTimestamp())
+    val selectedDate: StateFlow<Long> = _selectedDate
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val currentExpenses = _selectedDate.flatMapLatest { date -> dao.getExpensesByDate(date) }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val currentAccountTx = _selectedDate.flatMapLatest { date -> dao.getAccountTxByDate(date) }
+
+    // --- UPDATED: PRE-DEFINED CATEGORIES ---
+    private val defaultCategories = listOf(
+        "Home Expenses",
+        "Snacks & Fruit",
+        "Utilities",     // Covers: MSEB, Cylinder, Mobile, Internet, Water
+        "CNG/Petrol",
+        "Assets",        // Covers: Clothing, Electronic Devices
+        "Medical Expenses",
+        "Education Expenses",
+        "Rent",
+        "Loans"
+    )
+
+    // Logic: Combine Database Categories + Default Categories + Remove Duplicates + Sort Alphabetically
+    val savedCategories: Flow<List<String>> = dao.getAllCategories().map { dbCategories ->
+        (dbCategories + defaultCategories).distinct().sorted()
+    }
+
+    private val _itemSuggestions = MutableStateFlow<List<String>>(emptyList())
+    val itemSuggestions: StateFlow<List<String>> = _itemSuggestions
+
+    // --- ACTIONS ---
+
+    fun updateDate(newDate: Long) {
+        _selectedDate.value = newDate
+    }
+
+    fun fetchSuggestions(category: String, query: String) {
+        viewModelScope.launch {
+            if (query.isNotEmpty()) {
+                _itemSuggestions.value = dao.getItemSuggestions(category, query)
+            } else {
+                _itemSuggestions.value = emptyList()
+            }
+        }
+    }
+
+    // --- DATABASE OPERATIONS ---
+
+    fun addExpense(
+        date: Long, personName: String, openingBal: String, category: String,
+        itemName: String, qty: String, unit: UnitType, price: String, type: TransactionType
+    ) {
+        viewModelScope.launch {
+            val validQty = qty.toDoubleOrNull() ?: 0.0
+            val validPrice = price.toDoubleOrNull() ?: 0.0
+            val validOpening = openingBal.toDoubleOrNull() ?: 0.0
+
+            val expense = ExpenseItem(
+                date = date, day = getDayFromDate(date), personName = personName, openingBalance = validOpening,
+                category = category, itemName = itemName, quantity = validQty, unit = unit,
+                pricePerUnit = validPrice, totalPrice = validPrice, type = type
+            )
+            dao.insertExpense(expense)
+        }
+    }
+
+    fun addAccountTx(
+        date: Long,
+        holder: String, bank: String, accNum: String, // From
+        beneficiary: String, toBank: String, toAccNum: String, // To
+        amount: String, type: TransactionType
+    ) {
+        viewModelScope.launch {
+            val validAmount = amount.toDoubleOrNull() ?: 0.0
+            val tx = AccountTransaction(
+                date = date, day = getDayFromDate(date),
+                accountHolder = holder, bankName = bank, accountNumber = accNum,
+                beneficiaryName = beneficiary, toBankName = toBank, toAccountNumber = toAccNum,
+                amount = validAmount, type = type
+            )
+            dao.insertAccountTx(tx)
+        }
+    }
+
+    fun deleteExpense(item: ExpenseItem) {
+        viewModelScope.launch { dao.deleteExpense(item) }
+    }
+
+    // --- HELPERS ---
+    private fun getTodayTimestamp(): Long {
+        val calendar = Calendar.getInstance()
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        return calendar.timeInMillis
+    }
+
+    private fun getDayFromDate(date: Long): String {
+        val calendar = Calendar.getInstance()
+        calendar.timeInMillis = date
+        return java.text.SimpleDateFormat("EEEE", java.util.Locale.getDefault()).format(calendar.time)
+    }
+}

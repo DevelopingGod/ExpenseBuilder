@@ -1,0 +1,76 @@
+Act as a professional android app developer. Make use of Kotlin language and help me develop a android application which i would like to use for my own android 13 mobile with the following features:
+1] It should be light weight
+2] It should store the states of user and learn from the user entries
+
+You will be responsible to tell me how I can setup the environment for coding on my laptop right from IDE to the build.
+
+You will also be responsible to provide me clean, accurate and stylish application code.
+
+Aim: The application will be used to track daily expenses.
+
+What it should do:
+User will open the application. The application will be used  to track the daily expenses. It will have 2 options:
+1] Daily expense tracking
+2] Account balance tracking
+
+1] Daily expense tracking
+When this button is clicked, the user will select the date. A calendar UI must be provided for this purpose. Besides the date, day column will be present in which the day will automatically be loaded. Below will be a column for expenses by. Here the user will type in the name of the person.
+
+Below this button will be a division line.
+Then there will be a interface where we can see the opening balance. User can type in the opening balance there.
+
+Alongside will be the following:
+Box to enter item_name. The item names should automatically start showing up from the drop down based on category. The user will have an option to select category of items. Eg. Kirana, vegetables, stationery, misc, etc. Such categories. As the user starts typing after category is selected, it should start auto suggesting from the available database. These words I will provide or you can consider for now and keep it customizable.
+
+Item_qty. In this the user will select the option quantity in ML/pieces/litre/gram/kilogram and enter the number accordingly. 
+
+Item_price: Here the user will enter the price per piece / per kg / per liter [all options made available]
+
+total_price: This will be auto-calculation column where the total_price = item_price * quantity. [each type of measurement will have a different logic, so code should be tuned accordingly]
+
+debit / credit: The user will select whether the item had money debited or credited.
+
+In this way user will add all the items.
+At the end, the gross total based on price, debit and credit should get shown and calculated.
+
+Then a dividing line.
+
+Then below the line it should say, do you want to download the excel/pdf report.
+Then 2 buttons should appear.
+Download Excel [.xlsx]
+Download pdf [.pdf]
+
+The data that user entered should get properly arranged and should be able to be downloaded as report.
+In the report, the items with credit will be in green text.
+Category title will be blue and little big font.
+Rest will be black.
+Gross total will be bold black.
+
+The report of pdf should follow the following format:
+Demographics
+---------
+Item List [The title]
+items [column based format]
+----------
+Gross Total : the gross_total_price
+-----------
+Footer: Downloaded from ExpenseBuilder.io
+Made with love by Sankalp Indish and my linked link.
+
+2] Account tracking
+In this case, the user will have same demographics.
+However,
+instead of items, the user can manage how money came and went.
+account_holder_name: User can select from the dropdown the name of the account holder
+account_holder_bank_name: The bank name of account holder
+User_account_number: The number of the account holder [user will type]
+Amount transacted: The amount that was sent / receieved
+Type of transaction: debit/credit
+Date of transaciton: User can select from calendar UI the date of the transaction
+
+Similarly, this tab will also have the facility to download excel and pdf report.
+Credited should be bold green.
+
+You are responsible to build this app in a way that I can test it on my phone after build directly. And after 1 week of testing, I can later deploy it on google play store.
+
+If you think any other important features must be added, feel free to do so.
