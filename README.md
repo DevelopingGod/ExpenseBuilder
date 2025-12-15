@@ -3,12 +3,15 @@
 
 ![Android](https://img.shields.io/badge/Platform-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Language-Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)
-![Size](https://img.shields.io/badge/App_Size-~3MB-blue?style=for-the-badge)
+![Size](https://img.shields.io/badge/App_Size-~5MB-blue?style=for-the-badge)
 
 ## 📱 About The App
 **ExpenseBuilder** is a powerful yet lightweight Android application designed for travelers, students, and finance enthusiasts. Unlike standard expense trackers, ExpenseBuilder focuses on **multi-currency reporting**.
 
 Whether you are studying abroad or traveling, you can log expenses in one currency and generate reports converted to another (e.g., spend in **USD**, generate report in **INR**) using real-time exchange rates.
+
+Debit: dbt(-) means the amount debited, i.e. the amount spent.
+Credit: cr(+) means the amount credited, i.e. the amount received.
 
 ## ✨ Key Features
 
