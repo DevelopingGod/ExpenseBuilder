@@ -4,7 +4,6 @@
 ![Android](https://img.shields.io/badge/Platform-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Language-Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)
 ![Size](https://img.shields.io/badge/App_Size-~3MB-blue?style=for-the-badge)
-![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
 ## 📱 About The App
 **ExpenseBuilder** is a powerful yet lightweight Android application designed for travelers, students, and finance enthusiasts. Unlike standard expense trackers, ExpenseBuilder focuses on **multi-currency reporting**.
