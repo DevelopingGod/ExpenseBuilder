@@ -10,8 +10,8 @@
 
 Whether you are studying abroad or traveling, you can log expenses in one currency and generate reports converted to another (e.g., spend in **USD**, generate report in **INR**) using real-time exchange rates.
 
-Debit: dbt(-) means the amount debited, i.e. the amount spent.
-Credit: cr(+) means the amount credited, i.e. the amount received.
+- Debit: dbt(-) means the amount debited, i.e. the amount spent.
+- Credit: cr(+) means the amount credited, i.e. the amount received.
 
 ## ✨ Key Features
 
