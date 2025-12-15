@@ -11,6 +11,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -53,7 +54,7 @@ fun AccountScreen(viewModel: ExpenseViewModel) {
     var amount by remember { mutableStateOf("") }
     var selectedType by remember { mutableStateOf(TransactionType.DEBIT) }
 
-    // --- NEW: Payment Mode State ---
+    // --- Payment Mode State ---
     var selectedPaymentMode by remember { mutableStateOf("Cash") }
     val paymentOptions = listOf("Cash", "Cheque", "Card/UPI")
 
@@ -150,7 +151,7 @@ fun AccountScreen(viewModel: ExpenseViewModel) {
                 }
             }
 
-            // --- NEW: Payment Mode Radio Buttons ---
+            // --- Payment Mode Radio Buttons ---
             Spacer(modifier = Modifier.height(8.dp))
             Text("Payment Mode:", style = MaterialTheme.typography.labelMedium)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -165,7 +166,6 @@ fun AccountScreen(viewModel: ExpenseViewModel) {
                     }
                 }
             }
-            // ----------------------------------------
 
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -175,15 +175,12 @@ fun AccountScreen(viewModel: ExpenseViewModel) {
                         beneficiaryName.isBlank() || toBankName.isBlank() || toAccountNumber.isBlank() || amount.isBlank()) {
                         Toast.makeText(context, "All fields are mandatory", Toast.LENGTH_SHORT).show()
                     } else {
-                        // Pass the selectedPaymentMode here
                         viewModel.addAccountTx(
                             selectedDate, holderName, bankName, accNumber,
                             beneficiaryName, toBankName, toAccountNumber,
                             amount, selectedType, selectedPaymentMode
                         )
                         amount = ""
-                        // Optional: Reset mode or keep it
-                        selectedPaymentMode = "Cash"
                     }
                 },
                 modifier = Modifier.fillMaxWidth()
@@ -191,8 +188,9 @@ fun AccountScreen(viewModel: ExpenseViewModel) {
             HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
         }
 
+        // --- LIST WITH DELETE BUTTON ---
         items(items = accountList, key = { it.id }) { tx ->
-            AccountRow(tx, baseCurrency)
+            AccountRow(tx, baseCurrency) { viewModel.deleteAccountTx(tx) }
         }
 
         // --- FOOTER & EXPORT ---
@@ -208,15 +206,20 @@ fun AccountScreen(viewModel: ExpenseViewModel) {
 }
 
 @Composable
-fun AccountRow(tx: AccountTransaction, currency: String) {
+fun AccountRow(tx: AccountTransaction, currency: String, onDelete: () -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(2.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(tx.beneficiaryName, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                // --- Updated to show Payment Mode ---
                 Text("To: ${tx.toBankName} | Acc: ${tx.toAccountNumber} | [${tx.paymentMode}]", style = MaterialTheme.typography.bodySmall)
             }
+
             Text(text = "${if(tx.type == TransactionType.CREDIT) "+" else "-"} $currency ${tx.amount}", color = if(tx.type == TransactionType.CREDIT) Color.Green else Color.Black, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+
+            // --- DELETE BUTTON ---
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red)
+            }
         }
     }
 }

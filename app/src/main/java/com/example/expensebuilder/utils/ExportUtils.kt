@@ -33,29 +33,38 @@ object ExportUtils {
         return items.firstOrNull { it.personName.isNotBlank() }?.personName ?: "Unknown"
     }
 
-    private fun getOpeningBalance(items: List<ExpenseItem>): Double {
-        return items.firstOrNull { it.openingBalance > 0.0 }?.openingBalance ?: 0.0
+    // --- HELPER: Get Split Opening Balances ---
+    private fun getOpeningBalances(items: List<ExpenseItem>): Triple<Double, Double, Double> {
+        val item = items.firstOrNull { it.openingCash > 0 || it.openingCheque > 0 || it.openingCard > 0 }
+        return Triple(item?.openingCash ?: 0.0, item?.openingCheque ?: 0.0, item?.openingCard ?: 0.0)
     }
 
     // ================= DAILY EXPORT (CSV) =================
-    // (This part is working fine, keeping it same)
     fun exportDailyToExcel(context: Context, items: List<ExpenseItem>, baseCurr: String, targetCurr: String, rate: Double) {
         if (items.isEmpty()) { showToast(context, "No data to export"); return }
         try {
             val sb = StringBuilder()
             val name = getPersonName(items)
-            val openingBal = getOpeningBalance(items)
+            val (opCash, opCheque, opCard) = getOpeningBalances(items)
             val dateStr = convertDate(items.first().date)
 
             sb.append("Daily Expense Report\n")
             sb.append("Person Name,$name\n")
             sb.append("Date,$dateStr\n")
             sb.append("Rate,1 $baseCurr = $rate $targetCurr\n")
-            sb.append("Opening Balance,$openingBal $baseCurr\n\n")
+
+            // --- UPDATED: 3 Opening Balances ---
+            sb.append("Opening Cash,$opCash $baseCurr\n")
+            sb.append("Opening Cheque,$opCheque $baseCurr\n")
+            sb.append("Opening Card/UPI,$opCard $baseCurr\n\n")
+
             sb.append("Category,Item Name,Qty,Unit,Price ($baseCurr),Price ($targetCurr),Type,Mode\n")
 
-            var totalCredit = 0.0
-            var totalDebit = 0.0
+            // Track totals per mode for closing calculation
+            var cashCr = 0.0; var cashDr = 0.0
+            var chequeCr = 0.0; var chequeDr = 0.0
+            var cardCr = 0.0; var cardDr = 0.0
+
             val grouped = items.groupBy { it.category }
 
             grouped.forEach { (category, catItems) ->
@@ -66,20 +75,37 @@ object ExportUtils {
                     sb.append("$category,$safeItemName,${item.quantity},${item.unit},${item.totalPrice},$converted,${item.type},${item.paymentMode}\n")
 
                     catTotal += item.totalPrice
-                    if (item.type == TransactionType.CREDIT) totalCredit += item.totalPrice
-                    else totalDebit += item.totalPrice
+
+                    // Accumulate based on Mode
+                    if (item.type == TransactionType.CREDIT) {
+                        when(item.paymentMode) {
+                            "Cash" -> cashCr += item.totalPrice
+                            "Cheque" -> chequeCr += item.totalPrice
+                            "Card/UPI" -> cardCr += item.totalPrice
+                        }
+                    } else {
+                        when(item.paymentMode) {
+                            "Cash" -> cashDr += item.totalPrice
+                            "Cheque" -> chequeDr += item.totalPrice
+                            "Card/UPI" -> cardDr += item.totalPrice
+                        }
+                    }
                 }
                 sb.append(",Subtotal ($category),,,$catTotal,,,\n")
             }
 
-            val closing = openingBal + totalCredit - totalDebit
-            val closingConv = String.format("%.2f", closing * rate)
+            // --- UPDATED: Split Closing Balances ---
+            val closeCash = opCash + cashCr - cashDr
+            val closeCheque = opCheque + chequeCr - chequeDr
+            val closeCard = opCard + cardCr - cardDr
+            val grandTotal = closeCash + closeCheque + closeCard
 
-            sb.append("\nSUMMARY\n")
-            sb.append(",Total Credit (+),,,$totalCredit\n")
-            sb.append(",Total Debit (-),,,$totalDebit\n")
-            sb.append(",CLOSING BALANCE ($baseCurr),,,$closing\n")
-            sb.append(",CLOSING BALANCE ($targetCurr),,,$closingConv\n")
+            sb.append("\nCLOSING SUMMARY ($baseCurr)\n")
+            sb.append("Mode,Opening,Credit (+),Debit (-),Closing\n")
+            sb.append("Cash,$opCash,$cashCr,$cashDr,$closeCash\n")
+            sb.append("Cheque,$opCheque,$chequeCr,$chequeDr,$closeCheque\n")
+            sb.append("Card/UPI,$opCard,$cardCr,$cardDr,$closeCard\n")
+            sb.append(",,,,GRAND TOTAL: $grandTotal\n")
 
             val fileName = "Daily_Expense_${baseCurr}_${getFileNameDate()}.csv"
             saveFileToDownloads(context, fileName, "text/csv") { it.write(sb.toString().toByteArray()) }
@@ -88,7 +114,6 @@ object ExportUtils {
     }
 
     // ================= DAILY PDF EXPORT =================
-    // (Working fine)
     fun exportDailyToPdf(context: Context, items: List<ExpenseItem>, baseCurr: String, targetCurr: String, rate: Double) {
         if (items.isEmpty()) { showToast(context, "No data to export"); return }
         try {
@@ -104,17 +129,27 @@ object ExportUtils {
             }
 
             val name = getPersonName(items)
-            val openingBal = getOpeningBalance(items)
+            val (opCash, opCheque, opCard) = getOpeningBalances(items)
 
+            // --- Header ---
             paint.textSize = 14f; paint.typeface = Typeface.DEFAULT_BOLD
             canvas.drawText("Daily Report ($baseCurr)", 50f, y, paint); y += 20f
             paint.textSize = 12f; paint.typeface = Typeface.DEFAULT
             canvas.drawText("Name: $name", 50f, y, paint); y += 15f
             canvas.drawText("Date: ${convertDate(items.first().date)}", 50f, y, paint); y += 15f
-            canvas.drawText("Rate: 1 $baseCurr = $rate $targetCurr", 50f, y, paint); y += 15f
-            canvas.drawText("Open Bal: $baseCurr $openingBal", 50f, y, paint); y += 25f
+            canvas.drawText("Rate: 1 $baseCurr = $rate $targetCurr", 50f, y, paint); y += 20f
 
-            var totalCredit = 0.0; var totalDebit = 0.0
+            // --- 3 Opening Balances ---
+            paint.typeface = Typeface.DEFAULT_BOLD
+            canvas.drawText("Opening Balances:", 50f, y, paint); y += 15f
+            paint.typeface = Typeface.DEFAULT
+            canvas.drawText("Cash: $opCash | Cheque: $opCheque | Card: $opCard", 50f, y, paint); y += 25f
+
+            // Track totals
+            var cashCr = 0.0; var cashDr = 0.0
+            var chequeCr = 0.0; var chequeDr = 0.0
+            var cardCr = 0.0; var cardDr = 0.0
+
             items.groupBy { it.category }.forEach { (category, catItems) ->
                 checkPageBreak(); paint.color = Color.BLUE; paint.textSize = 14f
                 canvas.drawText(category, 50f, y, paint); y += 20f
@@ -126,18 +161,43 @@ object ExportUtils {
                     val sym = if(item.type == TransactionType.CREDIT) "(+)" else "(-)"
                     val line = "${item.itemName} | ${item.quantity} ${item.unit} | $baseCurr ${item.totalPrice} | $targetCurr ${String.format("%.2f", converted)} $sym | [${item.paymentMode}]"
                     canvas.drawText(line, 60f, y, paint)
-                    if (item.type == TransactionType.CREDIT) totalCredit += item.totalPrice else totalDebit += item.totalPrice
+
+                    // Accumulate totals
+                    if (item.type == TransactionType.CREDIT) {
+                        when(item.paymentMode) {
+                            "Cash" -> cashCr += item.totalPrice
+                            "Cheque" -> chequeCr += item.totalPrice
+                            "Card/UPI" -> cardCr += item.totalPrice
+                        }
+                    } else {
+                        when(item.paymentMode) {
+                            "Cash" -> cashDr += item.totalPrice
+                            "Cheque" -> chequeDr += item.totalPrice
+                            "Card/UPI" -> cardDr += item.totalPrice
+                        }
+                    }
                     y += 15f
                 }
                 y += 10f
             }
 
+            // --- Closing Summary ---
             checkPageBreak(); y += 10f
-            val closing = openingBal + totalCredit - totalDebit
-            val closingConv = closing * rate
-            paint.typeface = Typeface.DEFAULT_BOLD
-            canvas.drawText("CLOSING ($baseCurr): $closing", 50f, y, paint); y += 15f
-            canvas.drawText("CLOSING ($targetCurr): ${String.format("%.2f", closingConv)}", 50f, y, paint)
+            val closeCash = opCash + cashCr - cashDr
+            val closeCheque = opCheque + chequeCr - chequeDr
+            val closeCard = opCard + cardCr - cardDr
+            val grandTotal = closeCash + closeCheque + closeCard
+
+            paint.textSize = 12f; paint.typeface = Typeface.DEFAULT_BOLD
+            canvas.drawText("CLOSING SUMMARY ($baseCurr)", 50f, y, paint); y += 20f
+
+            paint.typeface = Typeface.DEFAULT
+            canvas.drawText("Cash: $closeCash", 50f, y, paint); y += 15f
+            canvas.drawText("Cheque: $closeCheque", 50f, y, paint); y += 15f
+            canvas.drawText("Card/UPI: $closeCard", 50f, y, paint); y += 20f
+
+            paint.textSize = 14f; paint.typeface = Typeface.DEFAULT_BOLD
+            canvas.drawText("GRAND TOTAL: $grandTotal", 50f, y, paint)
 
             pdfDocument.finishPage(page)
             val fileName = "Daily_Expense_${baseCurr}_${getFileNameDate()}.pdf"
@@ -147,12 +207,14 @@ object ExportUtils {
     }
 
     // ================= ACCOUNTS EXPORT (CSV) =================
-    // (Working fine)
     fun exportAccountsToExcel(context: Context, items: List<AccountTransaction>, baseCurr: String, targetCurr: String, rate: Double) {
         if (items.isEmpty()) { showToast(context, "No data to export"); return }
         try {
             val sb = StringBuilder()
+            val dateStr = convertDate(items.first().date) // Added Date
+
             sb.append("Account Transactions\n")
+            sb.append("Date,$dateStr\n") // <--- ADDED DATE
             sb.append("Rate,1 $baseCurr = $rate $targetCurr\n\n")
             sb.append("From Holder,From Bank,From Acc,To Beneficiary,To Bank,To Acc,Amt ($baseCurr),Amt ($targetCurr),Type,Mode\n")
 
@@ -166,8 +228,7 @@ object ExportUtils {
         } catch (e: Exception) { e.printStackTrace(); showToast(context, "Export Failed") }
     }
 
-    // ================= ACCOUNTS PDF EXPORT (UPDATED) =================
-    // FIX: Now explicitly shows Account Numbers and Bank Names
+    // ================= ACCOUNTS PDF EXPORT =================
     fun exportAccountsToPdf(context: Context, items: List<AccountTransaction>, baseCurr: String, targetCurr: String, rate: Double) {
         if (items.isEmpty()) { showToast(context, "No data to export"); return }
         try {
@@ -177,14 +238,20 @@ object ExportUtils {
             var canvas = page.canvas
             val paint = Paint()
             var y = 50f
+            val dateStr = convertDate(items.first().date) // Added Date
 
             paint.textSize = 18f; paint.typeface = Typeface.DEFAULT_BOLD
-            canvas.drawText("Account Tx ($baseCurr)", 50f, y, paint); y += 20f
+            canvas.drawText("Account Tx ($baseCurr)", 50f, y, paint); y += 25f
+
+            // <--- ADDED DATE HERE ---
+            paint.textSize = 14f
+            canvas.drawText("Date: $dateStr", 50f, y, paint); y += 20f
+            // ------------------------
+
             paint.textSize = 12f; canvas.drawText("Rate: 1 $baseCurr = $rate $targetCurr", 50f, y, paint); y += 40f
             paint.textSize = 10f; paint.typeface = Typeface.DEFAULT
 
             items.forEach { item ->
-                // Check page break logic (approx 4 lines per item + spacing)
                 if (y > 720f) { pdfDocument.finishPage(page); page = pdfDocument.startPage(pageInfo); canvas = page.canvas; y = 50f }
 
                 val converted = item.amount * rate

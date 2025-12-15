@@ -36,6 +36,10 @@ interface ExpenseDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAccountTx(tx: AccountTransaction)
 
+    // --- NEW: Delete Account Transaction ---
+    @Delete
+    suspend fun deleteAccountTx(tx: AccountTransaction)
+
     @Query("SELECT * FROM accounts WHERE date = :date ORDER BY id DESC")
     fun getAccountTxByDate(date: Long): Flow<List<AccountTransaction>>
 }

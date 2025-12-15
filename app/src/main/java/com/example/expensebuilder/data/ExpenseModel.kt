@@ -17,7 +17,13 @@ data class ExpenseItem(
     val date: Long,
     val day: String,
     val personName: String,
-    val openingBalance: Double,
+
+    // --- CHANGED: Split Opening Balances ---
+    val openingCash: Double,
+    val openingCheque: Double,
+    val openingCard: Double,
+    // ---------------------------------------
+
     val category: String,
     val itemName: String,
     val quantity: Double,
@@ -39,7 +45,7 @@ data class AccountTransaction(
     val bankName: String,
     val accountNumber: String,
 
-    // TO details (New Fields)
+    // TO details
     val beneficiaryName: String,
     val toBankName: String,
     val toAccountNumber: String,

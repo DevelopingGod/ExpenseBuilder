@@ -181,23 +181,28 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // ... inside ExpenseViewModel class ...
-
+    // --- UPDATED ADD EXPENSE (3 Opening Balances) ---
     fun addExpense(
-        date: Long, personName: String, openingBal: String, category: String,
-        itemName: String, qty: String, unit: UnitType, price: String, type: TransactionType,
-        paymentMode: String // <--- NEW PARAMETER
+        date: Long, personName: String,
+        opCash: String, opCheque: String, opCard: String, // <--- 3 SEPARATE INPUTS
+        category: String, itemName: String, qty: String, unit: UnitType,
+        price: String, type: TransactionType, paymentMode: String
     ) {
         viewModelScope.launch {
             val validQty = qty.toDoubleOrNull() ?: 0.0
             val validPrice = price.toDoubleOrNull() ?: 0.0
-            val validOpening = openingBal.toDoubleOrNull() ?: 0.0
+
+            // Parse the 3 balances safely
+            val vCash = opCash.toDoubleOrNull() ?: 0.0
+            val vCheque = opCheque.toDoubleOrNull() ?: 0.0
+            val vCard = opCard.toDoubleOrNull() ?: 0.0
 
             val expense = ExpenseItem(
-                date = date, day = getDayFromDate(date), personName = personName, openingBalance = validOpening,
+                date = date, day = getDayFromDate(date), personName = personName,
+                openingCash = vCash, openingCheque = vCheque, openingCard = vCard, // <--- SAVE THEM
                 category = category, itemName = itemName, quantity = validQty, unit = unit,
                 pricePerUnit = validPrice, totalPrice = validPrice, type = type,
-                paymentMode = paymentMode // <--- SAVE IT
+                paymentMode = paymentMode
             )
             dao.insertExpense(expense)
         }
@@ -207,7 +212,7 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         date: Long, holder: String, bank: String, accNum: String,
         beneficiary: String, toBank: String, toAccNum: String,
         amount: String, type: TransactionType,
-        paymentMode: String // <--- NEW PARAMETER
+        paymentMode: String
     ) {
         viewModelScope.launch {
             val validAmount = amount.toDoubleOrNull() ?: 0.0
@@ -216,7 +221,7 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
                 accountHolder = holder, bankName = bank, accountNumber = accNum,
                 beneficiaryName = beneficiary, toBankName = toBank, toAccountNumber = toAccNum,
                 amount = validAmount, type = type,
-                paymentMode = paymentMode // <--- SAVE IT
+                paymentMode = paymentMode
             )
             dao.insertAccountTx(tx)
         }
@@ -224,6 +229,11 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
 
     fun deleteExpense(item: ExpenseItem) {
         viewModelScope.launch { dao.deleteExpense(item) }
+    }
+
+    // --- NEW: Delete Account Function ---
+    fun deleteAccountTx(tx: AccountTransaction) {
+        viewModelScope.launch { dao.deleteAccountTx(tx) }
     }
 
     private fun getTodayTimestamp(): Long {
