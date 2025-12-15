@@ -65,6 +65,7 @@ Contributions are welcome!
 ## 👤 Author
 
 **[Sankalp Indish]**
+Hi there! My name is Sankalp Indish. I love to code. You can find my LinkedIn profile and GitHub link. Do check them out.
 * GitHub: [@DevelopingGod](https://github.com/DevelopingGod)
 * LinkedIn: [https://www.linkedin.com/in/sankalp-indish/]
 
