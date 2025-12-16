@@ -1,0 +1,409 @@
+package com.example.expensebuilder.utils
+
+import com.example.expensebuilder.data.AccountTransaction
+import com.example.expensebuilder.data.ExpenseDao
+import com.example.expensebuilder.data.ExpenseItem
+import com.example.expensebuilder.data.TransactionType
+import com.example.expensebuilder.data.UnitType
+import com.google.gson.Gson
+import fi.iki.elonen.NanoHTTPD
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import java.io.ByteArrayInputStream
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+
+// Data holder for live currency state
+data class CurrencyState(val base: String, val target: String, val rate: Double)
+
+class WifiServer(
+    private val dao: ExpenseDao,
+    private val currencyProvider: () -> CurrencyState,
+    private val currencyUpdater: (String, String) -> Unit
+) : NanoHTTPD(8080) {
+
+    private val gson = Gson()
+    private val scope = CoroutineScope(Dispatchers.IO)
+
+    override fun serve(session: IHTTPSession?): Response {
+        val uri = session?.uri ?: return newFixedLengthResponse("Error")
+        val method = session.method
+
+        if (method == Method.POST) {
+            val files = HashMap<String, String>()
+            try { session.parseBody(files) } catch (e: Exception) { e.printStackTrace() }
+            val postBody = files["postData"] ?: "{}"
+
+            return when (uri) {
+                "/api/addExpense" -> handleAddExpense(postBody)
+                "/api/deleteExpense" -> handleDeleteExpense(postBody)
+                "/api/addAccount" -> handleAddAccount(postBody)
+                "/api/deleteAccount" -> handleDeleteAccount(postBody)
+                "/api/setCurrency" -> handleSetCurrency(postBody)
+                else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
+            }
+        }
+
+        return when (uri) {
+            "/" -> newFixedLengthResponse(Response.Status.OK, MIME_HTML, getHtmlDashboard())
+            "/api/expenses" -> handleGetExpenses()
+            "/api/accounts" -> handleGetAccounts()
+            "/api/categories" -> handleGetCategories()
+            "/api/export" -> handleExport(session.parameters)
+            else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
+        }
+    }
+
+    // --- HANDLERS ---
+
+    private fun handleSetCurrency(json: String): Response {
+        val data = gson.fromJson(json, Map::class.java)
+        val base = data["base"].toString()
+        val target = data["target"].toString()
+        scope.launch(Dispatchers.Main) { currencyUpdater(base, target) }
+        return newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "Updated")
+    }
+
+    private fun handleGetCategories(): Response {
+        val list = runBlocking { dao.getAllCategories().first() }
+        return newFixedLengthResponse(Response.Status.OK, "application/json", gson.toJson(list))
+    }
+
+    private fun handleGetExpenses(): Response {
+        val list = runBlocking { dao.getExpensesByDate(getTodayTimestamp()).first() }
+        return newFixedLengthResponse(Response.Status.OK, "application/json", gson.toJson(list))
+    }
+
+    private fun handleGetAccounts(): Response {
+        val list = runBlocking { dao.getAccountTxByDate(getTodayTimestamp()).first() }
+        return newFixedLengthResponse(Response.Status.OK, "application/json", gson.toJson(list))
+    }
+
+    private fun handleAddExpense(json: String): Response {
+        try {
+            val data = gson.fromJson(json, Map::class.java)
+            val date = getTodayTimestamp()
+            val item = ExpenseItem(
+                date = date, day = getDayFromDate(date),
+                personName = data["personName"].toString(),
+                openingCash = data["opCash"].toString().toDoubleOrNull() ?: 0.0,
+                openingCheque = data["opCheque"].toString().toDoubleOrNull() ?: 0.0,
+                openingCard = data["opCard"].toString().toDoubleOrNull() ?: 0.0,
+                category = data["category"].toString(),
+                itemName = data["itemName"].toString(),
+                quantity = data["quantity"].toString().toDoubleOrNull() ?: 0.0,
+                unit = UnitType.valueOf(data["unit"].toString()),
+                pricePerUnit = data["price"].toString().toDoubleOrNull() ?: 0.0,
+                totalPrice = data["price"].toString().toDoubleOrNull() ?: 0.0,
+                type = TransactionType.valueOf(data["type"].toString()),
+                paymentMode = data["paymentMode"].toString()
+            )
+            runBlocking { dao.insertExpense(item) }
+            return newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "Added")
+        } catch (e: Exception) { return newFixedLengthResponse("Error: ${e.message}") }
+    }
+
+    private fun handleDeleteExpense(json: String): Response {
+        val data = gson.fromJson(json, Map::class.java)
+        val id = data["id"].toString().toDouble().toInt()
+        runBlocking {
+            val list = dao.getExpensesByDate(getTodayTimestamp()).first()
+            val item = list.find { it.id == id }
+            if (item != null) dao.deleteExpense(item)
+        }
+        return newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "Deleted")
+    }
+
+    private fun handleAddAccount(json: String): Response {
+        try {
+            val data = gson.fromJson(json, Map::class.java)
+            val date = getTodayTimestamp()
+            val tx = AccountTransaction(
+                date = date, day = getDayFromDate(date),
+                accountHolder = data["holder"].toString(),
+                bankName = data["bank"].toString(),
+                accountNumber = data["accNum"].toString(),
+                beneficiaryName = data["benName"].toString(),
+                toBankName = data["toBank"].toString(),
+                toAccountNumber = data["toAccNum"].toString(),
+                amount = data["amount"].toString().toDoubleOrNull() ?: 0.0,
+                type = TransactionType.valueOf(data["type"].toString()),
+                paymentMode = data["paymentMode"].toString()
+            )
+            runBlocking { dao.insertAccountTx(tx) }
+            return newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "Added")
+        } catch (e: Exception) { return newFixedLengthResponse("Error") }
+    }
+
+    private fun handleDeleteAccount(json: String): Response {
+        val data = gson.fromJson(json, Map::class.java)
+        val id = data["id"].toString().toDouble().toInt()
+        runBlocking {
+            val list = dao.getAccountTxByDate(getTodayTimestamp()).first()
+            val item = list.find { it.id == id }
+            if (item != null) dao.deleteAccountTx(item)
+        }
+        return newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "Deleted")
+    }
+
+    private fun handleExport(params: Map<String, List<String>>): Response {
+        val type = params["type"]?.firstOrNull() ?: "csv"
+        val screen = params["screen"]?.firstOrNull() ?: "daily"
+        val curr = currencyProvider()
+
+        var bytes: ByteArray = ByteArray(0)
+        var mime = "text/csv"
+        var filename = "export.csv"
+        var isEmpty = true
+
+        runBlocking {
+            if (screen == "daily") {
+                val list = dao.getExpensesByDate(getTodayTimestamp()).first()
+                if (list.isNotEmpty()) {
+                    isEmpty = false
+                    if (type == "pdf") {
+                        bytes = ExportUtils.generateDailyPdf(list, curr.base, curr.target, curr.rate)
+                        mime = "application/pdf"; filename = "Daily_${getFileNameDate()}.pdf"
+                    } else {
+                        bytes = ExportUtils.generateDailyCsv(list, curr.base, curr.target, curr.rate)
+                        filename = "Daily_${getFileNameDate()}.csv"
+                    }
+                }
+            } else {
+                val list = dao.getAccountTxByDate(getTodayTimestamp()).first()
+                if (list.isNotEmpty()) {
+                    isEmpty = false
+                    if (type == "pdf") {
+                        bytes = ExportUtils.generateAccountPdf(list, curr.base, curr.target, curr.rate)
+                        mime = "application/pdf"; filename = "Accounts_${getFileNameDate()}.pdf"
+                    } else {
+                        bytes = ExportUtils.generateAccountCsv(list, curr.base, curr.target, curr.rate)
+                        filename = "Accounts_${getFileNameDate()}.csv"
+                    }
+                }
+            }
+        }
+
+        if (isEmpty) return newFixedLengthResponse(Response.Status.NO_CONTENT, MIME_PLAINTEXT, "")
+
+        val response = newFixedLengthResponse(Response.Status.OK, mime, ByteArrayInputStream(bytes), bytes.size.toLong())
+        response.addHeader("Content-Disposition", "attachment; filename=\"$filename\"")
+        return response
+    }
+
+    private fun getTodayTimestamp(): Long {
+        val calendar = Calendar.getInstance()
+        calendar.set(Calendar.HOUR_OF_DAY, 0); calendar.set(Calendar.MINUTE, 0); calendar.set(Calendar.SECOND, 0); calendar.set(Calendar.MILLISECOND, 0)
+        return calendar.timeInMillis
+    }
+    private fun getDayFromDate(date: Long): String = SimpleDateFormat("EEEE", Locale.getDefault()).format(java.util.Date(date))
+    private fun getFileNameDate(): String = SimpleDateFormat("dd-MM-yyyy", Locale.getDefault()).format(java.util.Date())
+
+    // --- DASHBOARD HTML (FIXED BUTTONS) ---
+    private fun getHtmlDashboard(): String {
+        val curr = currencyProvider()
+        val rateStr = String.format("%.3f", curr.rate)
+
+        fun currOpts(selected: String): String {
+            val currs = listOf("USD", "INR", "EUR", "GBP", "JPY", "CAD", "AUD", "SGD")
+            return currs.joinToString("") {
+                val sel = if(it == selected) "selected" else ""
+                "<option value='$it' $sel>$it</option>"
+            }
+        }
+
+        return """
+            <!DOCTYPE html><html><head><title>ExpenseBuilder Web</title>
+            <style>
+                body { font-family: 'Segoe UI', sans-serif; padding:0; margin:0; background:#f4f7f6; height:100vh; display:flex; flex-direction:column; font-size: 16px; }
+                
+                header { background:#6200EE; color:white; padding:15px 30px; display:flex; justify-content:space-between; align-items:center; }
+                .app-title { font-size: 1.8rem; font-weight: bold; }
+                
+                .curr-controls select { padding:5px; border-radius:4px; border:none; margin:0 5px; font-weight:bold; color:#333; font-size:1rem; }
+                
+                .main-container { flex:1; display:flex; overflow:hidden; }
+                
+                .form-panel { 
+                    width: 350px; 
+                    min-width: 300px;
+                    max-width: 50%;
+                    background: white; 
+                    border-right: 1px solid #ddd; 
+                    padding: 20px; 
+                    overflow-y: auto; 
+                    resize: horizontal; 
+                }
+                
+                .list-panel { flex:1; padding:20px; overflow-y: auto; }
+                
+                .form-group { margin-bottom:15px; }
+                label { display:block; font-size:0.9rem; color:#666; margin-bottom:5px; font-weight:600; }
+                input, select { width:100%; padding:10px; border:1px solid #ccc; border-radius:4px; box-sizing:border-box; font-size:1rem; }
+                
+                button.add-btn { background:#6200EE; color:white; border:none; padding:14px; width:100%; border-radius:6px; font-weight:bold; cursor:pointer; margin-top:15px; font-size:1rem; }
+                button.add-btn:hover { background: #3700b3; }
+                
+                .tabs { display:flex; gap:10px; margin-bottom:20px; }
+                .tab { padding:12px 25px; background:#e0e0e0; border-radius:25px; cursor:pointer; font-weight:bold; color:#555; transition:0.2s; }
+                .tab.active { background:#6200EE; color:white; }
+                
+                table { width:100%; border-collapse:collapse; background:white; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+                th, td { padding:15px; text-align:left; border-bottom:1px solid #eee; font-size:1rem; }
+                th { background:#f8f9fa; font-weight:bold; color:#444; }
+                
+                .credit { color:green; font-weight:bold; background:#e8f5e9; padding:4px 8px; border-radius:4px; font-size:0.9rem; } 
+                .debit { color:red; font-weight:bold; background:#ffebee; padding:4px 8px; border-radius:4px; font-size:0.9rem; }
+                
+                /* BIGGER EXPORT BUTTONS */
+                .export-bar { display: flex; justify-content: flex-end; gap: 15px; margin-bottom: 20px; }
+                .btn-export { 
+                    text-decoration: none; 
+                    font-size: 1.1rem; /* Bigger font */
+                    padding: 14px 28px; /* Bigger padding */
+                    border-radius: 8px; 
+                    color: white; 
+                    font-weight: bold; 
+                    display: flex; 
+                    align-items: center; 
+                    gap: 10px; 
+                    box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+                    transition: transform 0.2s;
+                }
+                .btn-export:hover { transform: translateY(-2px); }
+                .xls { background: #1D6F42; } .pdf { background: #D32F2F; }
+                .hidden { display:none !important; }
+                
+                .btn-del { border:none; background:none; color:#aaa; font-size:1.4rem; cursor:pointer; }
+                .btn-del:hover { color:red; }
+                
+                .radio-group { display: flex; gap: 15px; align-items: center; }
+                .radio-item { display: flex; align-items: center; cursor: pointer; }
+                .radio-item input { width: auto; margin-right: 8px; transform: scale(1.2); cursor: pointer; }
+                .radio-item label { margin: 0; cursor: pointer; font-size: 1rem; }
+                .radio-item input:checked + label { color: #6200EE; font-weight: bold; }
+            </style>
+            </head><body>
+            <header>
+                <div class="app-title">ExpenseBuilder 💻</div>
+                <div class="curr-controls">
+                    <select id="baseCurr" onchange="updCurr()">${currOpts(curr.base)}</select>
+                    <span>&rarr;</span>
+                    <select id="targetCurr" onchange="updCurr()">${currOpts(curr.target)}</select>
+                    <span style="margin-left:10px; font-size:1rem; background:rgba(255,255,255,0.2); padding:5px 12px; border-radius:4px;">Rate: $rateStr</span>
+                </div>
+            </header>
+            <div class="main-container">
+                <div class="form-panel">
+                    <h3 style="margin-top:0; font-size:1.4rem; border-bottom:2px solid #eee; padding-bottom:10px;">Add Entry</h3>
+                    <div id="dailyForm">
+                         <div class="form-group"><label>Person Name</label><input id="d_name"></div>
+                         <div class="form-group"><label>Opening Balances (${curr.base})</label><div style="display:flex; gap:10px;"><input type="number" id="d_opCash" placeholder="Cash"><input type="number" id="d_opCheque" placeholder="Chq"><input type="number" id="d_opCard" placeholder="Card"></div></div>
+                         <div class="form-group"><label>Category</label><select id="d_cat"><option value="">Loading...</option></select></div>
+                         <div class="form-group"><label>Item Name</label><input id="d_item"></div>
+                         <div class="form-group"><label>Qty / Unit</label><div style="display:flex;gap:10px;">
+                            <input type="number" id="d_qty">
+                            <select id="d_unit" style="width:100px">
+                                <option>PIECE</option><option>KG</option><option>GRAM</option><option>LITER</option><option>ML</option>
+                            </select>
+                         </div></div>
+                         <div class="form-group"><label>Price (${curr.base})</label><input type="number" id="d_price"></div>
+                         <div class="form-group"><label>Type</label><select id="d_type"><option value="DEBIT">Debit</option><option value="CREDIT">Credit</option></select></div>
+                         <div class="form-group">
+                            <label>Payment Mode</label>
+                            <div class="radio-group">
+                                <div class="radio-item"><input type="radio" name="d_mode" value="Cash" id="dm1" checked><label for="dm1">Cash</label></div>
+                                <div class="radio-item"><input type="radio" name="d_mode" value="Cheque" id="dm2"><label for="dm2">Cheque</label></div>
+                                <div class="radio-item"><input type="radio" name="d_mode" value="Card/UPI" id="dm3"><label for="dm3">Card</label></div>
+                            </div>
+                        </div>
+                         <button class="add-btn" onclick="addD()">ADD ITEM</button>
+                    </div>
+                    <div id="accForm" class="hidden">
+                         <div class="form-group"><label>From Holder</label><input id="a_hold"></div>
+                         <div class="form-group"><label>From Bank</label><input id="a_bank"></div>
+                         <div class="form-group"><label>From Acc</label><input id="a_anum"></div>
+                         <div class="form-group"><label>To Beneficiary</label><input id="a_ben"></div>
+                         <div class="form-group"><label>To Bank</label><input id="a_tbank"></div>
+                         <div class="form-group"><label>To Acc</label><input id="a_tnum"></div>
+                         <div class="form-group"><label>Amount (${curr.base})</label><input type="number" id="a_amt"></div>
+                         <div class="form-group"><label>Type</label><select id="a_type"><option value="DEBIT">Debit</option><option value="CREDIT">Credit</option></select></div>
+                         <div class="form-group">
+                            <label>Payment Mode</label>
+                            <div class="radio-group">
+                                <div class="radio-item"><input type="radio" name="a_mode" value="Cash" id="am1" checked><label for="am1">Cash</label></div>
+                                <div class="radio-item"><input type="radio" name="a_mode" value="Cheque" id="am2"><label for="am2">Cheque</label></div>
+                                <div class="radio-item"><input type="radio" name="a_mode" value="Card/UPI" id="am3"><label for="am3">Card</label></div>
+                            </div>
+                        </div>
+                         <button class="add-btn" onclick="addA()">ADD TXN</button>
+                    </div>
+                </div>
+                <div class="list-panel">
+                    <div class="tabs"><div class="tab active" id="tabD" onclick="sw('daily')">Daily Expense</div><div class="tab" id="tabA" onclick="sw('acc')">Accounts</div></div>
+                    
+                    <div class="export-bar">
+                        <button onclick="dl('csv')" class="btn-export xls">📊 Download Excel</button> 
+                        <button onclick="dl('pdf')" class="btn-export pdf">📄 Download PDF</button>
+                    </div>
+
+                    <div id="listD"><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Type</th><th>Mode</th><th></th></tr></thead><tbody></tbody></table></div>
+                    <div id="listA" class="hidden"><table><thead><tr><th>Details</th><th>Amount</th><th>Type</th><th>Mode</th><th></th></tr></thead><tbody></tbody></table></div>
+                </div>
+            </div>
+            <script>
+                document.getElementById('baseCurr').value = "${curr.base}";
+                document.getElementById('targetCurr').value = "${curr.target}";
+                let curS = 'daily';
+
+                // Fixed: Default categories always available
+                const defaults = ["Home Expenses", "Snacks & Fruit", "Utilities", "CNG/Petrol", "Assets", "Medical Expenses", "Education Expenses", "Rent", "Loans"];
+
+                function sw(s){ curS=s; 
+                    document.getElementById('dailyForm').classList.toggle('hidden', s!=='daily'); 
+                    document.getElementById('accForm').classList.toggle('hidden', s==='daily');
+                    document.getElementById('listD').classList.toggle('hidden', s!=='daily');
+                    document.getElementById('listA').classList.toggle('hidden', s==='daily');
+                    document.getElementById('tabD').className = s==='daily'?'tab active':'tab';
+                    document.getElementById('tabA').className = s!=='daily'?'tab active':'tab';
+                    if(s==='daily') ldD(); else ldA();
+                }
+
+                function ldD(){ fetch('/api/expenses').then(r=>r.json()).then(d=>{ 
+                    let h=''; d.forEach(i=>{ h+=`<tr><td><b>${'$'}{i.itemName}</b><br><small style='color:#777'>${'$'}{i.category}</small></td><td>${'$'}{i.quantity} ${'$'}{i.unit}</td><td>${'$'}{i.totalPrice}</td><td><span class="${'$'}{i.type==='CREDIT'?'credit':'debit'}">${'$'}{i.type}</span></td><td>${'$'}{i.paymentMode}</td><td style="text-align:right"><button class="btn-del" onclick="del('deleteExpense',${'$'}{i.id})">&times;</button></td></tr>`}); 
+                    document.querySelector('#listD tbody').innerHTML=h||'<tr><td colspan="6" align="center">No entries</td></tr>'; 
+                }); }
+
+                function ldA(){ fetch('/api/accounts').then(r=>r.json()).then(d=>{ 
+                    let h=''; d.forEach(i=>{ h+=`<tr><td><b>${'$'}{i.beneficiaryName}</b><br><small>To: ${'$'}{i.toBankName}</small></td><td>${'$'}{i.amount}</td><td><span class="${'$'}{i.type==='CREDIT'?'credit':'debit'}">${'$'}{i.type}</span></td><td>${'$'}{i.paymentMode}</td><td style="text-align:right"><button class="btn-del" onclick="del('deleteAccount',${'$'}{i.id})">&times;</button></td></tr>`}); 
+                    document.querySelector('#listA tbody').innerHTML=h||'<tr><td colspan="5" align="center">No transactions</td></tr>'; 
+                }); }
+
+                function loadCats() { fetch('/api/categories').then(r=>r.json()).then(dbCats=>{ 
+                    let allCats = [...new Set([...defaults, ...dbCats])].sort();
+                    let h='<option value="">Select Category...</option>'; 
+                    allCats.forEach(c=>{ h+=`<option value="${'$'}{c}">${'$'}{c}</option>` }); 
+                    document.getElementById('d_cat').innerHTML=h; 
+                }); }
+
+                // FIXED: Use radio() helper for mode
+                function addD(){ if(!v('d_name')||!v('d_cat')||!v('d_item')||!v('d_price')) return alert("Fill all fields!"); post('/api/addExpense', { personName:v('d_name'), opCash:v('d_opCash'), opCheque:v('d_opCheque'), opCard:v('d_opCard'), category:v('d_cat'), itemName:v('d_item'), quantity:v('d_qty'), unit:v('d_unit'), price:v('d_price'), type:v('d_type'), paymentMode:radio('d_mode') }, ldD); }
+                function addA(){ if(!v('a_hold')||!v('a_ben')||!v('a_amt')) return alert("Fill all fields!"); post('/api/addAccount', { holder:v('a_hold'), bank:v('a_bank'), accNum:v('a_anum'), benName:v('a_ben'), toBank:v('a_tbank'), toAccNum:v('a_tnum'), amount:v('a_amt'), type:v('a_type'), paymentMode:radio('a_mode') }, ldA); }
+                
+                function updCurr(){ post('/api/setCurrency', { base:v('baseCurr'), target:v('targetCurr') }, () => location.reload()); }
+                function dl(t){ let u=`/api/export?type=${'$'}{t}&screen=${'$'}{curS}`; fetch(u).then(r=>{ if(r.status===204) alert('No data!'); else window.location.href=u; }); }
+                
+                function post(u,d,cb){ fetch(u,{method:'POST', body:JSON.stringify(d)}).then(cb); }
+                function del(u,id){ if(confirm('Delete?')) post('/api/'+u, {id:id}, curS==='daily'?ldD:ldA); }
+                function v(id){ return document.getElementById(id).value; }
+                function radio(name){ return document.querySelector(`input[name="${'$'}{name}"]:checked`).value; }
+
+                ldD(); loadCats();
+            </script></body></html>
+        """.trimIndent()
+    }
+}
