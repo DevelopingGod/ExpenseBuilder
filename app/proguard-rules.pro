@@ -2,7 +2,7 @@
 -ignorewarnings
 
 # --- APP PROTECTION ---
--keep class com.example.expensebuilder.viewmodel.** { *; }
+-keep class com.sankalp.expensebuilder.viewmodel.** { *; }
 
 # --- NETWORK PROTECTION ---
 -keep class okhttp3.** { *; }
@@ -12,8 +12,8 @@
 # (Note: Apache POI rules are gone because we replaced it with Native CSV)
 
 # Keep the Data classes exactly as they are (prevent renaming)
--keep class com.example.expensebuilder.data.** { *; }
--keepclassmembers class com.example.expensebuilder.data.** { *; }
+-keep class com.sankalp.expensebuilder.data.** { *; }
+-keepclassmembers class com.sankalp.expensebuilder.data.** { *; }
 
 # Keep Gson annotations working
 -keepattributes Signature

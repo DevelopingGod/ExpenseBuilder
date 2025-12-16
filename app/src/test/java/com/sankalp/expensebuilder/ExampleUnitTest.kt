@@ -1,4 +1,4 @@
-package com.example.expensebuilder
+package com.sankalp.expensebuilder
 
 import org.junit.Test
 

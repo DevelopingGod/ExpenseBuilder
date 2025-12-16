@@ -1,11 +1,11 @@
-package com.example.expensebuilder
+package com.sankalp.expensebuilder
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
-import com.example.expensebuilder.ui.MainScreen
-import com.example.expensebuilder.viewmodel.ExpenseViewModel
+import com.sankalp.expensebuilder.ui.MainScreen
+import com.sankalp.expensebuilder.viewmodel.ExpenseViewModel
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

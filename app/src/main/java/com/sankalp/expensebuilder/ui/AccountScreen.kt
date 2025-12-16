@@ -1,4 +1,4 @@
-package com.example.expensebuilder.ui
+package com.sankalp.expensebuilder.ui
 
 import android.app.DatePickerDialog
 import android.widget.Toast
@@ -21,9 +21,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.example.expensebuilder.data.AccountTransaction
-import com.example.expensebuilder.data.TransactionType
-import com.example.expensebuilder.viewmodel.ExpenseViewModel
+import com.sankalp.expensebuilder.data.AccountTransaction
+import com.sankalp.expensebuilder.data.TransactionType
+import com.sankalp.expensebuilder.viewmodel.ExpenseViewModel
 import java.text.SimpleDateFormat
 import java.util.*
 

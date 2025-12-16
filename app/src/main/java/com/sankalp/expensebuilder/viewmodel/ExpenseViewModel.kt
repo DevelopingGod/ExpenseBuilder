@@ -1,18 +1,18 @@
-package com.example.expensebuilder.viewmodel
+package com.sankalp.expensebuilder.viewmodel
 
 import android.app.Application
 import android.content.Context
 import android.widget.Toast // Added for the prompt
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.expensebuilder.data.AccountTransaction
-import com.example.expensebuilder.data.AppDatabase
-import com.example.expensebuilder.data.ExpenseItem
-import com.example.expensebuilder.data.TransactionType
-import com.example.expensebuilder.data.UnitType
-import com.example.expensebuilder.utils.ExportUtils
-import com.example.expensebuilder.utils.WifiServer
-import com.example.expensebuilder.utils.CurrencyState
+import com.sankalp.expensebuilder.data.AccountTransaction
+import com.sankalp.expensebuilder.data.AppDatabase
+import com.sankalp.expensebuilder.data.ExpenseItem
+import com.sankalp.expensebuilder.data.TransactionType
+import com.sankalp.expensebuilder.data.UnitType
+import com.sankalp.expensebuilder.utils.ExportUtils
+import com.sankalp.expensebuilder.utils.WifiServer
+import com.sankalp.expensebuilder.utils.CurrencyState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow

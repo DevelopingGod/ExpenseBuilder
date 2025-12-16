@@ -7,11 +7,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.expensebuilder"
+    namespace = "com.sankalp.expensebuilder"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.example.expensebuilder"
+        applicationId = "com.sankalp.expensebuilder"
 
         // FIX 2: Raised minSdk to 26 to support Apache POI (Excel)
         minSdk = 26

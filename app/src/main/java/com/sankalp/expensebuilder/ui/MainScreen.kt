@@ -1,4 +1,4 @@
-package com.example.expensebuilder.ui
+package com.sankalp.expensebuilder.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,7 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.expensebuilder.viewmodel.ExpenseViewModel
+import com.sankalp.expensebuilder.viewmodel.ExpenseViewModel
 
 @Composable
 fun MainScreen(viewModel: ExpenseViewModel) {

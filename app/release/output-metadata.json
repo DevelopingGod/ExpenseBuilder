@@ -4,7 +4,7 @@
     "type": "APK",
     "kind": "Directory"
   },
-  "applicationId": "com.example.expensebuilder",
+  "applicationId": "com.sankalp.expensebuilder",
   "variantName": "release",
   "elements": [
     {

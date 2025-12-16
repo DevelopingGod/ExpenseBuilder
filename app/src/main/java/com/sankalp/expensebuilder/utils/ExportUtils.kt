@@ -1,4 +1,4 @@
-package com.example.expensebuilder.utils
+package com.sankalp.expensebuilder.utils
 
 import android.content.ContentValues
 import android.content.Context
@@ -12,9 +12,9 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.widget.Toast
-import com.example.expensebuilder.data.AccountTransaction
-import com.example.expensebuilder.data.ExpenseItem
-import com.example.expensebuilder.data.TransactionType
+import com.sankalp.expensebuilder.data.AccountTransaction
+import com.sankalp.expensebuilder.data.ExpenseItem
+import com.sankalp.expensebuilder.data.TransactionType
 import java.io.ByteArrayOutputStream
 import java.io.OutputStream
 import java.text.SimpleDateFormat
