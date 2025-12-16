@@ -14,7 +14,7 @@ Whether you are studying abroad or traveling, you can log expenses in one curren
 - Credit: cr(+) means the amount credited, i.e. the amount received.
 
 ## ✨ Key Features
-
+* **🧬 Cross Functional:** Through private IP, you can send your mobile expenses on your other device, such as Laptop and manage the further expenses there. This makes the app useable across androids, desktops and laptop too.
 * **🌍 Dynamic Currency Conversion:** Automatically fetches live exchange rates (via Open Exchange Rates API) to convert your expense totals instantly.
 * **📊 Smart Reporting:**
     * **PDF Export:** Generate professional, printable reports with auto-calculated totals.
