@@ -2,6 +2,7 @@ package com.example.expensebuilder.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.widget.Toast // Added for the prompt
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.expensebuilder.data.AccountTransaction
@@ -10,6 +11,8 @@ import com.example.expensebuilder.data.ExpenseItem
 import com.example.expensebuilder.data.TransactionType
 import com.example.expensebuilder.data.UnitType
 import com.example.expensebuilder.utils.ExportUtils
+import com.example.expensebuilder.utils.WifiServer
+import com.example.expensebuilder.utils.CurrencyState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +23,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import java.net.URL
 import java.util.Calendar
 
@@ -67,6 +72,56 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         refreshRates()
     }
 
+    // --- WIFI SERVER LOGIC ---
+    private var server: WifiServer? = null
+    private val _serverIp = MutableStateFlow<String?>(null)
+    val serverIp: StateFlow<String?> = _serverIp
+
+    fun toggleServer() {
+        if (server != null) {
+            server?.stop()
+            server = null
+            _serverIp.value = null
+        } else {
+            try {
+                server = WifiServer(
+                    dao,
+                    currencyProvider = {
+                        CurrencyState(_baseCurrency.value, _targetCurrency.value, _exchangeRate.value)
+                    },
+                    currencyUpdater = { base, target ->
+                        updateBaseCurrency(base)
+                        updateTargetCurrency(target)
+                    }
+                )
+                server?.start()
+                _serverIp.value = "http://${getIpAddress()}:8080"
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+    }
+
+    private fun getIpAddress(): String {
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val intf = interfaces.nextElement()
+                val addrs = intf.inetAddresses
+                while (addrs.hasMoreElements()) {
+                    val addr = addrs.nextElement()
+                    if (!addr.isLoopbackAddress && addr is Inet4Address) {
+                        return addr.hostAddress ?: "Unknown"
+                    }
+                }
+            }
+        } catch (ex: Exception) { }
+        return "Unknown"
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        server?.stop()
+    }
+
     // --- ACTIONS ---
 
     fun updateDate(newDate: Long) {
@@ -97,25 +152,19 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             val cachedRate = prefs.getFloat(todayKey, -1f)
 
             if (cachedRate != -1f) {
-                // CACHE HIT
                 _exchangeRate.value = cachedRate.toDouble()
             } else {
-                // CACHE MISS
                 fetchAndCacheRate(base, target, todayKey)
             }
         }
     }
 
-    // --- NATIVE JAVA NETWORKING (No Libraries, No Crashes) ---
     private suspend fun fetchAndCacheRate(base: String, target: String, cacheKey: String) {
         withContext(Dispatchers.IO) {
             try {
-                // 1. Direct URL Connection (Built into Android)
-                // This bypasses Retrofit/OkHttp/Gson entirely.
                 val urlString = "https://open.er-api.com/v6/latest/$base"
                 val jsonString = URL(urlString).readText()
 
-                // 2. Native Parsing
                 val rootObject = JSONObject(jsonString)
                 val ratesObject = rootObject.getJSONObject("rates")
 
@@ -124,14 +173,13 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
                     rate = ratesObject.getDouble(target)
                 }
 
-                // 3. Save & Update
                 prefs.edit().putFloat(cacheKey, rate.toFloat()).apply()
                 _exchangeRate.value = rate
 
             } catch (e: Exception) {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
-                    android.widget.Toast.makeText(getApplication(), "Rate Failed: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
+                    Toast.makeText(getApplication(), "Rate Failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -142,10 +190,20 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         return "${cal.get(Calendar.YEAR)}-${cal.get(Calendar.DAY_OF_YEAR)}"
     }
 
-    // --- EXPORT OPERATIONS ---
+    // --- EXPORT OPERATIONS (UPDATED WITH NO DATA CHECK) ---
     fun exportDailyData(context: Context, type: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val currentList = currentExpenses.first()
+
+            // CHECK: Is the list empty?
+            if (currentList.isEmpty()) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "No data to export", Toast.LENGTH_SHORT).show()
+                }
+                return@launch
+            }
+
+            // If not empty, proceed
             val base = _baseCurrency.value
             val target = _targetCurrency.value
             val rate = _exchangeRate.value
@@ -161,6 +219,16 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
     fun exportAccountData(context: Context, type: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val currentList = currentAccountTx.first()
+
+            // CHECK: Is the list empty?
+            if (currentList.isEmpty()) {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(context, "No data to export", Toast.LENGTH_SHORT).show()
+                }
+                return@launch
+            }
+
+            // If not empty, proceed
             val base = _baseCurrency.value
             val target = _targetCurrency.value
             val rate = _exchangeRate.value
@@ -181,10 +249,10 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // --- UPDATED ADD EXPENSE (3 Opening Balances) ---
+    // --- ADD EXPENSE (3 Opening Balances) ---
     fun addExpense(
         date: Long, personName: String,
-        opCash: String, opCheque: String, opCard: String, // <--- 3 SEPARATE INPUTS
+        opCash: String, opCheque: String, opCard: String,
         category: String, itemName: String, qty: String, unit: UnitType,
         price: String, type: TransactionType, paymentMode: String
     ) {
@@ -192,14 +260,13 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
             val validQty = qty.toDoubleOrNull() ?: 0.0
             val validPrice = price.toDoubleOrNull() ?: 0.0
 
-            // Parse the 3 balances safely
             val vCash = opCash.toDoubleOrNull() ?: 0.0
             val vCheque = opCheque.toDoubleOrNull() ?: 0.0
             val vCard = opCard.toDoubleOrNull() ?: 0.0
 
             val expense = ExpenseItem(
                 date = date, day = getDayFromDate(date), personName = personName,
-                openingCash = vCash, openingCheque = vCheque, openingCard = vCard, // <--- SAVE THEM
+                openingCash = vCash, openingCheque = vCheque, openingCard = vCard,
                 category = category, itemName = itemName, quantity = validQty, unit = unit,
                 pricePerUnit = validPrice, totalPrice = validPrice, type = type,
                 paymentMode = paymentMode
@@ -231,7 +298,6 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch { dao.deleteExpense(item) }
     }
 
-    // --- NEW: Delete Account Function ---
     fun deleteAccountTx(tx: AccountTransaction) {
         viewModelScope.launch { dao.deleteAccountTx(tx) }
     }

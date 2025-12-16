@@ -2,56 +2,63 @@ package com.example.expensebuilder.data
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.google.gson.annotations.SerializedName
 
 enum class TransactionType {
-    DEBIT, CREDIT
+    @SerializedName("DEBIT") DEBIT,
+    @SerializedName("CREDIT") CREDIT
 }
 
 enum class UnitType {
-    PIECE, KG, GRAM, LITER, ML
+    @SerializedName("PIECE") PIECE,
+    @SerializedName("KG") KG,
+    @SerializedName("GRAM") GRAM,
+    @SerializedName("LITER") LITER,
+    @SerializedName("ML") ML
 }
 
 @Entity(tableName = "expenses")
 data class ExpenseItem(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val date: Long,
-    val day: String,
-    val personName: String,
+    @PrimaryKey(autoGenerate = true)
+    @SerializedName("id") val id: Int = 0,
 
-    // --- CHANGED: Split Opening Balances ---
-    val openingCash: Double,
-    val openingCheque: Double,
-    val openingCard: Double,
-    // ---------------------------------------
+    @SerializedName("date") val date: Long,
+    @SerializedName("day") val day: String,
+    @SerializedName("personName") val personName: String,
 
-    val category: String,
-    val itemName: String,
-    val quantity: Double,
-    val unit: UnitType,
-    val pricePerUnit: Double,
-    val totalPrice: Double,
-    val type: TransactionType,
-    val paymentMode: String // "Cash", "Cheque", or "Card/UPI"
+    @SerializedName("openingCash") val openingCash: Double,
+    @SerializedName("openingCheque") val openingCheque: Double,
+    @SerializedName("openingCard") val openingCard: Double,
+
+    @SerializedName("category") val category: String,
+    @SerializedName("itemName") val itemName: String,
+    @SerializedName("quantity") val quantity: Double,
+    @SerializedName("unit") val unit: UnitType,
+    @SerializedName("pricePerUnit") val pricePerUnit: Double,
+    @SerializedName("totalPrice") val totalPrice: Double,
+    @SerializedName("type") val type: TransactionType,
+    @SerializedName("paymentMode") val paymentMode: String
 )
 
 @Entity(tableName = "accounts")
 data class AccountTransaction(
-    @PrimaryKey(autoGenerate = true) val id: Int = 0,
-    val date: Long,
-    val day: String,
+    @PrimaryKey(autoGenerate = true)
+    @SerializedName("id") val id: Int = 0,
+
+    @SerializedName("date") val date: Long,
+    @SerializedName("day") val day: String,
 
     // FROM details
-    val accountHolder: String,
-    val bankName: String,
-    val accountNumber: String,
+    @SerializedName("accountHolder") val accountHolder: String,
+    @SerializedName("bankName") val bankName: String,
+    @SerializedName("accountNumber") val accountNumber: String,
 
     // TO details
-    val beneficiaryName: String,
-    val toBankName: String,
-    val toAccountNumber: String,
+    @SerializedName("beneficiaryName") val beneficiaryName: String,
+    @SerializedName("toBankName") val toBankName: String,
+    @SerializedName("toAccountNumber") val toAccountNumber: String,
 
-    val amount: Double,
-    val type: TransactionType,
-
-    val paymentMode: String // "Cash", "Cheque", or "Card/UPI"
+    @SerializedName("amount") val amount: Double,
+    @SerializedName("type") val type: TransactionType,
+    @SerializedName("paymentMode") val paymentMode: String
 )
