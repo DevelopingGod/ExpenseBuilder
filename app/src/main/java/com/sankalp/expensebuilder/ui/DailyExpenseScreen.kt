@@ -21,9 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.sankalp.expensebuilder.data.ExpenseItem
-import com.sankalp.expensebuilder.data.TransactionType
-import com.sankalp.expensebuilder.data.UnitType
+import com.sankalp.expensebuilder.data.*
 import com.sankalp.expensebuilder.viewmodel.ExpenseViewModel
 import java.text.SimpleDateFormat
 import java.util.*
@@ -34,14 +32,26 @@ fun DailyExpenseScreen(viewModel: ExpenseViewModel) {
     val selectedDate by viewModel.selectedDate.collectAsState()
     val expenseList by viewModel.currentExpenses.collectAsState(initial = emptyList())
 
+    // NEW: Collect the list of Banks added for this specific date
+    val bankBalances by viewModel.currentBankBalances.collectAsState(initial = emptyList())
+
     val baseCurrency by viewModel.baseCurrency.collectAsState()
     val targetCurrency by viewModel.targetCurrency.collectAsState()
     val exchangeRate by viewModel.exchangeRate.collectAsState()
 
-    // --- State for 3 Opening Balances ---
-    val opCash = remember { mutableStateOf("") }
-    val opCheque = remember { mutableStateOf("") }
-    val opCard = remember { mutableStateOf("") }
+    // State for showing the "Add Bank" dialog
+    var showAddBankDialog by remember { mutableStateOf(false) }
+
+    if (showAddBankDialog) {
+        AddBankDialog(
+            baseCurrency = baseCurrency,
+            onDismiss = { showAddBankDialog = false },
+            onAdd = { name, cash, chq, card ->
+                viewModel.addOrUpdateBankBalance(selectedDate, name, cash, chq, card)
+                showAddBankDialog = false
+            }
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
 
@@ -68,20 +78,41 @@ fun DailyExpenseScreen(viewModel: ExpenseViewModel) {
                     onTargetChange = viewModel::updateTargetCurrency
                 )
 
-                // --- 1. Input Form (Now handles 3 Opening Balances) ---
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                // --- 1. NEW: Bank Management Section ---
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("Bank Sources / Opening Balances", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
+                    Button(onClick = { showAddBankDialog = true }, contentPadding = PaddingValues(horizontal = 8.dp), modifier = Modifier.height(35.dp)) {
+                        Text("+ Add Bank")
+                    }
+                }
+
+                // Display list of added banks
+                bankBalances.forEach { bank ->
+                    BankBalanceRow(bank, baseCurrency) { viewModel.deleteBankBalance(bank) }
+                }
+
+                if (bankBalances.isEmpty()) {
+                    Text("No banks added. Add a bank (e.g., SBI, Cash) to start.", color = Color.Gray, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 4.dp))
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                // --- 2. Input Form (Updated for Bank Select & Vertical Qty/Unit) ---
                 ExpenseInputForm(
                     viewModel = viewModel,
                     selectedDate = selectedDate,
                     baseCurrency = baseCurrency,
-                    opCash = opCash,
-                    opCheque = opCheque,
-                    opCard = opCard
+                    bankBalances = bankBalances // Pass available banks to form
                 )
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-                // --- 2. Detailed Summary Card (Shows Split Totals) ---
-                DetailedSummaryCard(expenseList, opCash.value, opCheque.value, opCard.value, baseCurrency)
+                // --- 3. Multi-Bank Summary Card ---
+                if (bankBalances.isNotEmpty()) {
+                    MultiBankSummaryCard(expenseList, bankBalances, baseCurrency)
+                }
             }
 
             items(items = expenseList, key = { it.id }) { item ->
@@ -100,66 +131,117 @@ fun DailyExpenseScreen(viewModel: ExpenseViewModel) {
     }
 }
 
+// --- NEW COMPONENT: Dialog to Add a Bank ---
+@Composable
+fun AddBankDialog(baseCurrency: String, onDismiss: () -> Unit, onAdd: (String, String, String, String) -> Unit) {
+    var name by remember { mutableStateOf("") }
+    var cash by remember { mutableStateOf("") }
+    var cheque by remember { mutableStateOf("") }
+    var card by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add Bank / Source") },
+        text = {
+            Column {
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Bank Name (e.g. HDFC)") }, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+                Text("Opening Balances ($baseCurrency):", style = MaterialTheme.typography.labelSmall)
+                Row {
+                    OutlinedTextField(value = cash, onValueChange = { cash = it }, label = { Text("Cash") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                    Spacer(Modifier.width(4.dp))
+                    OutlinedTextField(value = cheque, onValueChange = { cheque = it }, label = { Text("Chq") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                    Spacer(Modifier.width(4.dp))
+                    OutlinedTextField(value = card, onValueChange = { card = it }, label = { Text("Card") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                if (name.isNotBlank()) onAdd(name, cash.ifBlank { "0" }, cheque.ifBlank { "0" }, card.ifBlank { "0" })
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+// --- NEW COMPONENT: Row showing Bank details ---
+@Composable
+fun BankBalanceRow(bank: DailyBankBalance, currency: String, onDelete: () -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(Modifier.padding(8.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(bank.bankName, fontWeight = FontWeight.Bold)
+                Text("Op: $currency ${bank.openingCash} (C) | ${bank.openingCheque} (Q) | ${bank.openingCard} (D)", style = MaterialTheme.typography.bodySmall)
+            }
+            IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, "Delete", tint = Color.Red, modifier = Modifier.size(20.dp)) }
+        }
+    }
+}
+
 @Composable
 fun ExpenseInputForm(
     viewModel: ExpenseViewModel,
     selectedDate: Long,
     baseCurrency: String,
-    opCash: MutableState<String>,
-    opCheque: MutableState<String>,
-    opCard: MutableState<String>
+    bankBalances: List<DailyBankBalance>
 ) {
     val categories by viewModel.savedCategories.collectAsState(initial = emptyList())
     val suggestions by viewModel.itemSuggestions.collectAsState()
 
     var personName by remember { mutableStateOf("") }
+
+    // Auto-select first bank if available
+    var selectedBank by remember { mutableStateOf(if (bankBalances.isNotEmpty()) bankBalances[0].bankName else "") }
+    // Update selected bank if list changes (e.g. user adds first bank)
+    LaunchedEffect(bankBalances) {
+        if (selectedBank.isBlank() && bankBalances.isNotEmpty()) selectedBank = bankBalances[0].bankName
+    }
+
     var category by remember { mutableStateOf("") }
     var itemName by remember { mutableStateOf("") }
+    var additionalInfo by remember { mutableStateOf("") } // NEW FIELD
     var quantity by remember { mutableStateOf("") }
     var price by remember { mutableStateOf("") }
     var selectedUnit by remember { mutableStateOf(UnitType.PIECE) }
     var selectedType by remember { mutableStateOf(TransactionType.DEBIT) }
 
-    // --- Payment Mode State ---
     var selectedPaymentMode by remember { mutableStateOf("Cash") }
     val paymentOptions = listOf("Cash", "Cheque", "Card/UPI")
 
     var catExpanded by remember { mutableStateOf(false) }
+    var bankExpanded by remember { mutableStateOf(false) } // NEW
     var unitExpanded by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
     Column {
         OutlinedTextField(value = personName, onValueChange = { personName = it }, label = { Text("Person Name") }, modifier = Modifier.fillMaxWidth())
 
-        // --- 3 Opening Balance Fields (Row) ---
-        Text("Opening Balances ($baseCurrency)", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top=8.dp))
-        Row(Modifier.fillMaxWidth()) {
+        // --- NEW: Bank Selection Dropdown ---
+        Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
             OutlinedTextField(
-                value = opCash.value, onValueChange = { opCash.value = it },
-                label = { Text("Cash") }, modifier = Modifier.weight(1f),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                value = selectedBank, onValueChange = {}, readOnly = true, label = { Text("Select Bank / Source") }, modifier = Modifier.fillMaxWidth(),
+                trailingIcon = { Icon(Icons.Default.ArrowDropDown, null, Modifier.clickable { bankExpanded = true }) }
             )
-            Spacer(Modifier.width(4.dp))
-            OutlinedTextField(
-                value = opCheque.value, onValueChange = { opCheque.value = it },
-                label = { Text("Cheque") }, modifier = Modifier.weight(1f),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-            )
-            Spacer(Modifier.width(4.dp))
-            OutlinedTextField(
-                value = opCard.value, onValueChange = { opCard.value = it },
-                label = { Text("Card") }, modifier = Modifier.weight(1f),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-            )
+            DropdownMenu(expanded = bankExpanded, onDismissRequest = { bankExpanded = false }) {
+                if (bankBalances.isEmpty()) {
+                    DropdownMenuItem(text = { Text("No Banks Added") }, onClick = { bankExpanded = false })
+                }
+                bankBalances.forEach { b ->
+                    DropdownMenuItem(text = { Text(b.bankName) }, onClick = { selectedBank = b.bankName; bankExpanded = false })
+                }
+            }
         }
 
-        Box(modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(
-                value = category, onValueChange = { category = it }, label = { Text("Category") }, modifier = Modifier.fillMaxWidth(),
-                trailingIcon = { Icon(Icons.Default.ArrowDropDown, "Select", Modifier.clickable { catExpanded = true }) }
-            )
-            DropdownMenu(expanded = catExpanded, onDismissRequest = { catExpanded = false }) {
-                categories.forEach { cat -> DropdownMenuItem(text = { Text(cat) }, onClick = { category = cat; catExpanded = false }) }
+        Row(Modifier.fillMaxWidth()) {
+            Box(Modifier.weight(1f)) {
+                OutlinedTextField(
+                    value = category, onValueChange = { category = it }, label = { Text("Category") }, modifier = Modifier.fillMaxWidth(),
+                    trailingIcon = { Icon(Icons.Default.ArrowDropDown, "Select", Modifier.clickable { catExpanded = true }) }
+                )
+                DropdownMenu(expanded = catExpanded, onDismissRequest = { catExpanded = false }) {
+                    categories.forEach { cat -> DropdownMenuItem(text = { Text(cat) }, onClick = { category = cat; catExpanded = false }) }
+                }
             }
         }
 
@@ -175,22 +257,34 @@ fun ExpenseInputForm(
             }
         }
 
+        // --- NEW: Additional Info Field ---
+        OutlinedTextField(value = additionalInfo, onValueChange = { additionalInfo = it }, label = { Text("Additional Info (Optional)") }, modifier = Modifier.fillMaxWidth())
+
+        // --- UPDATED: Qty and Unit Vertical Layout ---
         Row(Modifier.fillMaxWidth()) {
-            OutlinedTextField(value = quantity, onValueChange = { quantity = it }, label = { Text("Qty") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-            Spacer(Modifier.width(4.dp))
-            Box(Modifier.weight(0.8f)) {
-                OutlinedTextField(value = selectedUnit.name, onValueChange = {}, readOnly = true, label = { Text("Unit") }, trailingIcon = { Icon(Icons.Default.ArrowDropDown, null, Modifier.clickable { unitExpanded = true }) })
-                DropdownMenu(expanded = unitExpanded, onDismissRequest = { unitExpanded = false }) {
-                    UnitType.values().forEach { u -> DropdownMenuItem(text = { Text(u.name) }, onClick = { selectedUnit = u; unitExpanded = false }) }
+            // Column 1: Qty and Unit stacked vertically
+            Column(Modifier.weight(1f)) {
+                OutlinedTextField(value = quantity, onValueChange = { quantity = it }, label = { Text("Qty") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                Spacer(Modifier.height(4.dp))
+                Box(Modifier.fillMaxWidth()) {
+                    OutlinedTextField(value = selectedUnit.name, onValueChange = {}, readOnly = true, label = { Text("Unit") }, modifier = Modifier.fillMaxWidth(), trailingIcon = { Icon(Icons.Default.ArrowDropDown, null, Modifier.clickable { unitExpanded = true }) })
+                    DropdownMenu(expanded = unitExpanded, onDismissRequest = { unitExpanded = false }) {
+                        UnitType.values().forEach { u -> DropdownMenuItem(text = { Text(u.name) }, onClick = { selectedUnit = u; unitExpanded = false }) }
+                    }
                 }
             }
-        }
 
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(value = price, onValueChange = { price = it }, label = { Text("Price ($baseCurrency)") }, modifier = Modifier.weight(1f), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
             Spacer(Modifier.width(8.dp))
-            Switch(checked = selectedType == TransactionType.CREDIT, onCheckedChange = { selectedType = if (it) TransactionType.CREDIT else TransactionType.DEBIT })
-            Text(if(selectedType == TransactionType.CREDIT) "Credit" else "Debit", color = if(selectedType == TransactionType.CREDIT) Color.Green else Color.Black)
+
+            // Column 2: Price and Type stacked
+            Column(Modifier.weight(1f)) {
+                OutlinedTextField(value = price, onValueChange = { price = it }, label = { Text("Price ($baseCurrency)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(checked = selectedType == TransactionType.CREDIT, onCheckedChange = { selectedType = if (it) TransactionType.CREDIT else TransactionType.DEBIT })
+                    Text(if(selectedType == TransactionType.CREDIT) "Credit" else "Debit", color = if(selectedType == TransactionType.CREDIT) Color.Green else Color.Black)
+                }
+            }
         }
 
         // --- Payment Mode Radio Buttons ---
@@ -210,62 +304,67 @@ fun ExpenseInputForm(
 
         Button(
             onClick = {
-                if(personName.isBlank() || category.isBlank() || itemName.isBlank() || quantity.isBlank() || price.isBlank()) {
-                    Toast.makeText(context, "Required fields are empty (Name, Item, Price etc)", Toast.LENGTH_SHORT).show()
+                if(personName.isBlank() || selectedBank.isBlank() || category.isBlank() || itemName.isBlank() || quantity.isBlank() || price.isBlank()) {
+                    Toast.makeText(context, "Required fields are empty (Bank, Name, Item, Price)", Toast.LENGTH_SHORT).show()
                 } else {
-                    // Pass ALL 3 Opening Balances
                     viewModel.addExpense(
                         selectedDate, personName,
-                        opCash.value, opCheque.value, opCard.value,
-                        category, itemName, quantity, selectedUnit, price, selectedType, selectedPaymentMode
+                        selectedBank, // NEW: Pass the selected Bank
+                        category, itemName, quantity, selectedUnit, price, selectedType, selectedPaymentMode,
+                        additionalInfo // NEW: Pass Additional Info
                     )
-                    itemName = ""; quantity = ""; price = ""
-                    // selectedPaymentMode = "Cash" // Optional reset
+                    itemName = ""; quantity = ""; price = ""; additionalInfo = ""
                 }
             },
             modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-        ) { Text("ADD") }
+        ) { Text("ADD ENTRY") }
     }
 }
 
+// --- NEW COMPONENT: Summary Card Handling Multiple Banks ---
 @Composable
-fun DetailedSummaryCard(items: List<ExpenseItem>, opCashStr: String, opChequeStr: String, opCardStr: String, currency: String) {
-    val opCash = opCashStr.toDoubleOrNull() ?: 0.0
-    val opCheque = opChequeStr.toDoubleOrNull() ?: 0.0
-    val opCard = opCardStr.toDoubleOrNull() ?: 0.0
-
-    // Logic to calculate closing balance for a specific mode
-    fun calcClosing(mode: String, open: Double): Double {
-        val credit = items.filter { it.paymentMode == mode && it.type == TransactionType.CREDIT }.sumOf { it.totalPrice }
-        val debit = items.filter { it.paymentMode == mode && it.type == TransactionType.DEBIT }.sumOf { it.totalPrice }
-        return open + credit - debit
-    }
-
-    // Exact string matches for modes are important!
-    val closeCash = calcClosing("Cash", opCash)
-    val closeCheque = calcClosing("Cheque", opCheque)
-    val closeCard = calcClosing("Card/UPI", opCard)
-
+fun MultiBankSummaryCard(items: List<ExpenseItem>, banks: List<DailyBankBalance>, currency: String) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer), modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("Closing Balances ($currency)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+            Text("Closing Summary ($currency)", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
 
-            Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) { Text("Cash:"); Text("$currency ${String.format("%.2f", closeCash)}", fontWeight = FontWeight.Bold) }
-            Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) { Text("Cheque:"); Text("$currency ${String.format("%.2f", closeCheque)}", fontWeight = FontWeight.Bold) }
-            Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) { Text("Card/UPI:"); Text("$currency ${String.format("%.2f", closeCard)}", fontWeight = FontWeight.Bold) }
+            var grandTotal = 0.0
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-            val total = closeCash + closeCheque + closeCard
+            banks.forEach { bank ->
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                Text(bank.bankName, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+
+                // Filter expenses for THIS specific bank
+                val bankItems = items.filter { it.bankName == bank.bankName }
+
+                fun calc(mode: String, open: Double): Double {
+                    val cr = bankItems.filter { it.paymentMode == mode && it.type == TransactionType.CREDIT }.sumOf { it.totalPrice }
+                    val dr = bankItems.filter { it.paymentMode == mode && it.type == TransactionType.DEBIT }.sumOf { it.totalPrice }
+                    return open + cr - dr
+                }
+
+                val cCash = calc("Cash", bank.openingCash)
+                val cChq = calc("Cheque", bank.openingCheque)
+                val cCard = calc("Card/UPI", bank.openingCard)
+                val bankTotal = cCash + cChq + cCard
+                grandTotal += bankTotal
+
+                Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) { Text("Cash:"); Text(String.format("%.2f", cCash)) }
+                Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) { Text("Cheque:"); Text(String.format("%.2f", cChq)) }
+                Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) { Text("Card:"); Text(String.format("%.2f", cCard)) }
+                Text("Total: ${String.format("%.2f", bankTotal)}", fontSize = androidx.compose.ui.unit.TextUnit.Unspecified, fontWeight = FontWeight.Bold)
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
             Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) {
-                Text("GRAND TOTAL:", fontWeight = FontWeight.Bold);
-                Text("$currency ${String.format("%.2f", total)}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text("GRAND TOTAL ALL BANKS:", fontWeight = FontWeight.Bold);
+                Text("$currency ${String.format("%.2f", grandTotal)}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             }
         }
     }
 }
 
-// Reusing existing components if they aren't in this file
+// --- KEEPING EXISTING COMPONENTS ---
 @Composable
 fun DateCurrencyHeader(
     selectedDate: Long,
@@ -277,7 +376,7 @@ fun DateCurrencyHeader(
     onTargetChange: (String) -> Unit
 ) {
     val dateFormatter = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-    val currencies = listOf("USD", "INR", "GBP", "EUR", "JPY", "CAD")
+    val currencies = listOf("USD", "INR", "GBP", "EUR", "JPY", "CAD", "SGD")
     var baseExp by remember { mutableStateOf(false) }
     var targetExp by remember { mutableStateOf(false) }
 
@@ -325,7 +424,10 @@ fun ExpenseRow(item: ExpenseItem, currency: String, onDelete: () -> Unit) {
         Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(item.itemName, style = MaterialTheme.typography.titleMedium, color = if (item.type == TransactionType.CREDIT) Color.Green else Color.Black, fontWeight = FontWeight.Bold)
-                Text("${item.category} | ${item.quantity} ${item.unit} | ${item.paymentMode}", style = MaterialTheme.typography.bodySmall)
+                // Added Additional Info to display
+                val infoText = if(item.additionalInfo.isNotBlank()) "(${item.additionalInfo}) " else ""
+                Text("${infoText}${item.category} | ${item.quantity} ${item.unit} | ${item.paymentMode}", style = MaterialTheme.typography.bodySmall)
+                Text(item.bankName, style = MaterialTheme.typography.labelSmall, color = Color.DarkGray)
             }
             Text("$currency ${String.format("%.2f", item.totalPrice)}", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
             IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red) }

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Info // NEW Icon
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
@@ -21,7 +22,8 @@ import com.sankalp.expensebuilder.viewmodel.ExpenseViewModel
 @Composable
 fun MainScreen(viewModel: ExpenseViewModel) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Daily Expense", "Accounts")
+    // NEW: Added 3rd Tab
+    val tabs = listOf("Daily Expense", "Accounts", "Guide")
     val serverIp by viewModel.serverIp.collectAsState()
 
     if (serverIp != null) {
@@ -58,7 +60,15 @@ fun MainScreen(viewModel: ExpenseViewModel) {
                     NavigationBarItem(
                         selected = selectedTab == index,
                         onClick = { selectedTab = index },
-                        icon = { Icon(if (index == 0) Icons.Default.CalendarToday else Icons.Default.Person, null) },
+                        icon = {
+                            // NEW: Icon logic
+                            val icon = when(index) {
+                                0 -> Icons.Default.CalendarToday
+                                1 -> Icons.Default.Person
+                                else -> Icons.Default.Info
+                            }
+                            Icon(icon, null)
+                        },
                         label = { Text(title) }
                     )
                 }
@@ -66,7 +76,11 @@ fun MainScreen(viewModel: ExpenseViewModel) {
         }
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding)) {
-            if (selectedTab == 0) DailyExpenseScreen(viewModel) else AccountScreen(viewModel)
+            when(selectedTab) {
+                0 -> DailyExpenseScreen(viewModel)
+                1 -> AccountScreen(viewModel)
+                2 -> AppGuideScreen() // NEW Screen
+            }
         }
     }
 }
