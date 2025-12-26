@@ -170,7 +170,9 @@ fun AppGuideScreen() {
                     append(" reports.\n")
                     append("• Reports include a ")
                     withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Closing Summary") }
-                    append(" calculated per Bank.")
+                    append(" calculated per Bank.\n")
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Note: ") }
+                    append("For the Android UI, the files will be downloaded in the Downloads Folder of the File Manager of your Mobile / Android.")
                 }
             )
         }
