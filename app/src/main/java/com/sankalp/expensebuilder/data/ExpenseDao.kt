@@ -15,14 +15,17 @@ interface ExpenseDao {
     @Query("SELECT * FROM expenses WHERE date = :date ORDER BY id DESC")
     fun getExpensesByDate(date: Long): Flow<List<ExpenseItem>>
 
-    // NEW: One-Shot for Server (Fixes "First Entry" hang)
     @Query("SELECT * FROM expenses WHERE date = :date ORDER BY id DESC")
     suspend fun getExpensesByDateSync(date: Long): List<ExpenseItem>
 
+    // History Tab Range Query
+    @Query("SELECT * FROM expenses WHERE date BETWEEN :startDate AND :endDate ORDER BY date DESC, id DESC")
+    fun getExpensesByDateRange(startDate: Long, endDate: Long): Flow<List<ExpenseItem>>
+
+    // --- Categories ---
     @Query("SELECT DISTINCT category FROM expenses ORDER BY category ASC")
     fun getAllCategories(): Flow<List<String>>
 
-    // NEW: One-Shot for Server
     @Query("SELECT DISTINCT category FROM expenses ORDER BY category ASC")
     suspend fun getAllCategoriesSync(): List<String>
 
@@ -39,7 +42,6 @@ interface ExpenseDao {
     @Query("SELECT * FROM bank_balances WHERE date = :date ORDER BY bankName ASC")
     fun getBankBalancesByDate(date: Long): Flow<List<DailyBankBalance>>
 
-    // NEW: One-Shot for Server
     @Query("SELECT * FROM bank_balances WHERE date = :date ORDER BY bankName ASC")
     suspend fun getBankBalancesByDateSync(date: Long): List<DailyBankBalance>
 
@@ -53,7 +55,10 @@ interface ExpenseDao {
     @Query("SELECT * FROM accounts WHERE date = :date ORDER BY id DESC")
     fun getAccountTxByDate(date: Long): Flow<List<AccountTransaction>>
 
-    // NEW: One-Shot for Server
     @Query("SELECT * FROM accounts WHERE date = :date ORDER BY id DESC")
     suspend fun getAccountTxByDateSync(date: Long): List<AccountTransaction>
+
+    // NEW: For History Tab (Range Query for Accounts)
+    @Query("SELECT * FROM accounts WHERE date BETWEEN :startDate AND :endDate ORDER BY date DESC, id DESC")
+    fun getAccountTxByDateRange(startDate: Long, endDate: Long): Flow<List<AccountTransaction>>
 }

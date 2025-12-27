@@ -45,7 +45,7 @@ fun AppGuideScreen() {
             Spacer(modifier = Modifier.height(16.dp))
         }
 
-        // --- SECTION 1 ---
+        // --- SECTION 1: Getting Started ---
         item {
             GuideSection(
                 title = "1. Getting Started: Banks",
@@ -75,7 +75,7 @@ fun AppGuideScreen() {
             )
         }
 
-        // --- SECTION 2 ---
+        // --- SECTION 2: Credit/Debit ---
         item {
             GuideSection(
                 title = "2. Credit vs Debit",
@@ -91,7 +91,7 @@ fun AppGuideScreen() {
             )
         }
 
-        // --- SECTION 3 ---
+        // --- SECTION 3: Daily Expenses ---
         item {
             GuideSection(
                 title = "3. Daily Expenses",
@@ -112,7 +112,7 @@ fun AppGuideScreen() {
             )
         }
 
-        // --- SECTION 4 ---
+        // --- SECTION 4: Currency & Reports ---
         item {
             GuideSection(
                 title = "4. Currency & Reports",
@@ -133,7 +133,7 @@ fun AppGuideScreen() {
             )
         }
 
-        // --- SECTION 5 ---
+        // --- SECTION 5: WiFi Dashboard ---
         item {
             GuideSection(
                 title = "5. WiFi PC Dashboard",
@@ -157,7 +157,7 @@ fun AppGuideScreen() {
             )
         }
 
-        // --- SECTION 6 ---
+        // --- SECTION 6: Exports ---
         item {
             GuideSection(
                 title = "6. Exports",
@@ -173,6 +173,43 @@ fun AppGuideScreen() {
                     append(" calculated per Bank.\n")
                     withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Note: ") }
                     append("For the Android UI, the files will be downloaded in the Downloads Folder of the File Manager of your Mobile / Android.")
+                }
+            )
+        }
+
+        // --- NEW SECTION 7: Accounts Tab ---
+        item {
+            GuideSection(
+                title = "7. Accounts Tab",
+                icon = Icons.Default.Person,
+                content = buildAnnotatedString {
+                    append("• Use this tab to record ")
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Money Transfers") }
+                    append(" between people, banks, or entities.\n")
+                    append("• Useful for tracking ")
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Loans, Rent, Salary, or Inter-bank transfers") }
+                    append(".\n")
+                    append("• Fill in details for both ")
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Sender (From)") }
+                    append(" and ")
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Receiver (To)") }
+                    append(" to maintain clear records.")
+                }
+            )
+        }
+
+        // --- NEW SECTION 8: History Tab ---
+        item {
+            GuideSection(
+                title = "8. Transaction History",
+                icon = Icons.Default.History,
+                content = buildAnnotatedString {
+                    append("• This tab provides a ")
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Merged View") }
+                    append(" of all your Daily Expenses and Account Transactions sorted by date.\n")
+                    append("• You can download a comprehensive ")
+                    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("Monthly Report") }
+                    append(" from here that combines everything into one document.")
                 }
             )
         }

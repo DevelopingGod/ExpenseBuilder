@@ -10,13 +10,13 @@ import com.google.gson.Gson
 import fi.iki.elonen.NanoHTTPD
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import java.io.ByteArrayInputStream
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import java.util.Date
 
 data class CurrencyState(val base: String, val target: String, val rate: Double)
 
@@ -46,19 +46,45 @@ class WifiServer(
                 "/api/setCurrency" -> handleSetCurrency(postBody)
                 "/api/addBank" -> handleAddBank(postBody)
                 "/api/deleteBank" -> handleDeleteBank(postBody)
+                "/api/clearHistory" -> handleClearHistory(postBody)
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
             }
         }
 
         return when (uri) {
             "/" -> newFixedLengthResponse(Response.Status.OK, MIME_HTML, getHtmlDashboard())
-            "/api/expenses" -> handleGetExpenses()
-            "/api/accounts" -> handleGetAccounts()
+            "/api/expenses" -> handleGetExpenses(session.parameters)
+            "/api/accounts" -> handleGetAccounts(session.parameters)
             "/api/categories" -> handleGetCategories()
-            "/api/banks" -> handleGetBanks()
+            "/api/banks" -> handleGetBanks(session.parameters)
+            "/api/history" -> handleGetHistory(session.parameters)
             "/api/export" -> handleExport(session.parameters)
             else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Not Found")
         }
+    }
+
+    // --- DATE PARSING HELPER ---
+    private fun parseDateParam(params: Map<String, List<String>>): Long {
+        val dateStr = params["date"]?.firstOrNull()
+        return if (!dateStr.isNullOrEmpty()) {
+            try {
+                val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                sdf.parse(dateStr)?.time ?: getTodayTimestamp()
+            } catch (e: Exception) { getTodayTimestamp() }
+        } else {
+            getTodayTimestamp()
+        }
+    }
+
+    // --- MONTH RANGE HELPER ---
+    private fun getMonthRange(date: Long): Pair<Long, Long> {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = date
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        val start = cal.timeInMillis
+        cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH))
+        val end = cal.timeInMillis
+        return Pair(start, end)
     }
 
     // --- HANDLERS ---
@@ -76,26 +102,67 @@ class WifiServer(
         return newFixedLengthResponse(Response.Status.OK, "application/json", gson.toJson(list))
     }
 
-    private fun handleGetBanks(): Response {
-        val list = runBlocking { dao.getBankBalancesByDateSync(getTodayTimestamp()) }
+    private fun handleGetBanks(params: Map<String, List<String>>): Response {
+        val date = parseDateParam(params)
+        val list = runBlocking { dao.getBankBalancesByDateSync(date) }
         return newFixedLengthResponse(Response.Status.OK, "application/json", gson.toJson(list))
     }
 
-    private fun handleGetExpenses(): Response {
-        val list = runBlocking { dao.getExpensesByDateSync(getTodayTimestamp()) }
+    private fun handleGetExpenses(params: Map<String, List<String>>): Response {
+        val date = parseDateParam(params)
+        val list = runBlocking { dao.getExpensesByDateSync(date) }
         return newFixedLengthResponse(Response.Status.OK, "application/json", gson.toJson(list))
     }
 
-    private fun handleGetAccounts(): Response {
-        val list = runBlocking { dao.getAccountTxByDateSync(getTodayTimestamp()) }
+    private fun handleGetAccounts(params: Map<String, List<String>>): Response {
+        val date = parseDateParam(params)
+        val list = runBlocking { dao.getAccountTxByDateSync(date) }
         return newFixedLengthResponse(Response.Status.OK, "application/json", gson.toJson(list))
+    }
+
+    private fun handleGetHistory(params: Map<String, List<String>>): Response {
+        val date = parseDateParam(params)
+        val (start, end) = getMonthRange(date)
+
+        val exps = ArrayList<ExpenseItem>()
+        val accs = ArrayList<AccountTransaction>()
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = start
+
+        runBlocking {
+            while (cal.timeInMillis <= end) {
+                val d = cal.timeInMillis
+                exps.addAll(dao.getExpensesByDateSync(d))
+                accs.addAll(dao.getAccountTxByDateSync(d))
+                cal.add(Calendar.DAY_OF_MONTH, 1)
+            }
+        }
+
+        val combined = mapOf("expenses" to exps, "accounts" to accs)
+        return newFixedLengthResponse(Response.Status.OK, "application/json", gson.toJson(combined))
+    }
+
+    private fun handleClearHistory(json: String): Response {
+        val data = gson.fromJson(json, Map::class.java)
+        val dateStr = data["date"]?.toString()
+        val date = if(!dateStr.isNullOrEmpty()) SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(dateStr)?.time ?: getTodayTimestamp() else getTodayTimestamp()
+
+        runBlocking {
+            val exps = dao.getExpensesByDateSync(date)
+            exps.forEach { dao.deleteExpense(it) }
+            val accs = dao.getAccountTxByDateSync(date)
+            accs.forEach { dao.deleteAccountTx(it) }
+        }
+        return newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "Cleared")
     }
 
     private fun handleAddBank(json: String): Response {
         try {
             val data = gson.fromJson(json, Map::class.java)
-            val date = getTodayTimestamp()
-            val bankName = data["bankName"].toString()
+            val dateStr = data["date"]?.toString()
+            val date = if(!dateStr.isNullOrEmpty()) SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(dateStr)?.time ?: getTodayTimestamp() else getTodayTimestamp()
+
+            val bankName = data["bankName"].toString().trim()
             val opCash = data["opCash"].toString().toDoubleOrNull() ?: 0.0
             val opCheque = data["opCheque"].toString().toDoubleOrNull() ?: 0.0
             val opCard = data["opCard"].toString().toDoubleOrNull() ?: 0.0
@@ -108,8 +175,10 @@ class WifiServer(
 
     private fun handleDeleteBank(json: String): Response {
         val data = gson.fromJson(json, Map::class.java)
-        val bankName = data["bankName"].toString()
-        val date = getTodayTimestamp()
+        val bankName = data["bankName"].toString().trim()
+        val dateStr = data["date"]?.toString()
+        val date = if(!dateStr.isNullOrEmpty()) SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(dateStr)?.time ?: getTodayTimestamp() else getTodayTimestamp()
+
         runBlocking {
             val list = dao.getBankBalancesByDateSync(date)
             val item = list.find { it.bankName == bankName }
@@ -121,27 +190,26 @@ class WifiServer(
     private fun handleAddExpense(json: String): Response {
         try {
             val data = gson.fromJson(json, Map::class.java)
-            val date = getTodayTimestamp()
+            val dateStr = data["date"]?.toString()
+            val date = if(!dateStr.isNullOrEmpty()) SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(dateStr)?.time ?: getTodayTimestamp() else getTodayTimestamp()
 
-            val bank = data["bankName"]?.toString() ?: "Unknown"
-            val info = data["additionalInfo"]?.toString() ?: ""
+            val bank = data["bankName"]?.toString()?.trim() ?: "Unknown"
+            val info = data["additionalInfo"]?.toString()?.trim() ?: ""
 
             val item = ExpenseItem(
                 date = date, day = getDayFromDate(date),
-                personName = data["personName"].toString(),
+                personName = data["personName"].toString().trim(),
                 bankName = bank,
                 additionalInfo = info,
-                openingCash = 0.0,
-                openingCheque = 0.0,
-                openingCard = 0.0,
-                category = data["category"].toString(),
-                itemName = data["itemName"].toString(),
+                openingCash = 0.0, openingCheque = 0.0, openingCard = 0.0,
+                category = data["category"].toString().trim(),
+                itemName = data["itemName"].toString().trim(),
                 quantity = data["quantity"].toString().toDoubleOrNull() ?: 0.0,
                 unit = UnitType.valueOf(data["unit"].toString()),
                 pricePerUnit = data["price"].toString().toDoubleOrNull() ?: 0.0,
                 totalPrice = data["price"].toString().toDoubleOrNull() ?: 0.0,
                 type = TransactionType.valueOf(data["type"].toString()),
-                paymentMode = data["paymentMode"].toString()
+                paymentMode = data["paymentMode"].toString().trim()
             )
             runBlocking { dao.insertExpense(item) }
             return newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "Added")
@@ -151,8 +219,11 @@ class WifiServer(
     private fun handleDeleteExpense(json: String): Response {
         val data = gson.fromJson(json, Map::class.java)
         val id = data["id"].toString().toDouble().toInt()
+        val dateStr = data["date"]?.toString()
+        val date = if(!dateStr.isNullOrEmpty()) SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(dateStr)?.time ?: getTodayTimestamp() else getTodayTimestamp()
+
         runBlocking {
-            val list = dao.getExpensesByDateSync(getTodayTimestamp())
+            val list = dao.getExpensesByDateSync(date)
             val item = list.find { it.id == id }
             if (item != null) dao.deleteExpense(item)
         }
@@ -162,18 +233,20 @@ class WifiServer(
     private fun handleAddAccount(json: String): Response {
         try {
             val data = gson.fromJson(json, Map::class.java)
-            val date = getTodayTimestamp()
+            val dateStr = data["date"]?.toString()
+            val date = if(!dateStr.isNullOrEmpty()) SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(dateStr)?.time ?: getTodayTimestamp() else getTodayTimestamp()
+
             val tx = AccountTransaction(
                 date = date, day = getDayFromDate(date),
-                accountHolder = data["holder"].toString(),
-                bankName = data["bank"].toString(),
-                accountNumber = data["accNum"].toString(),
-                beneficiaryName = data["benName"].toString(),
-                toBankName = data["toBank"].toString(),
-                toAccountNumber = data["toAccNum"].toString(),
+                accountHolder = data["holder"].toString().trim(),
+                bankName = data["bank"].toString().trim(),
+                accountNumber = data["accNum"].toString().trim(),
+                beneficiaryName = data["benName"].toString().trim(),
+                toBankName = data["toBank"].toString().trim(),
+                toAccountNumber = data["toAccNum"].toString().trim(),
                 amount = data["amount"].toString().toDoubleOrNull() ?: 0.0,
                 type = TransactionType.valueOf(data["type"].toString()),
-                paymentMode = data["paymentMode"].toString()
+                paymentMode = data["paymentMode"].toString().trim()
             )
             runBlocking { dao.insertAccountTx(tx) }
             return newFixedLengthResponse(Response.Status.OK, MIME_PLAINTEXT, "Added")
@@ -183,8 +256,11 @@ class WifiServer(
     private fun handleDeleteAccount(json: String): Response {
         val data = gson.fromJson(json, Map::class.java)
         val id = data["id"].toString().toDouble().toInt()
+        val dateStr = data["date"]?.toString()
+        val date = if(!dateStr.isNullOrEmpty()) SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(dateStr)?.time ?: getTodayTimestamp() else getTodayTimestamp()
+
         runBlocking {
-            val list = dao.getAccountTxByDateSync(getTodayTimestamp())
+            val list = dao.getAccountTxByDateSync(date)
             val item = list.find { it.id == id }
             if (item != null) dao.deleteAccountTx(item)
         }
@@ -194,6 +270,7 @@ class WifiServer(
     private fun handleExport(params: Map<String, List<String>>): Response {
         val type = params["type"]?.firstOrNull() ?: "csv"
         val screen = params["screen"]?.firstOrNull() ?: "daily"
+        val date = parseDateParam(params)
         val curr = currencyProvider()
 
         var bytes: ByteArray = ByteArray(0)
@@ -203,9 +280,8 @@ class WifiServer(
 
         runBlocking {
             if (screen == "daily") {
-                val list = dao.getExpensesByDateSync(getTodayTimestamp())
-                val banks = dao.getBankBalancesByDateSync(getTodayTimestamp())
-
+                val list = dao.getExpensesByDateSync(date)
+                val banks = dao.getBankBalancesByDateSync(date)
                 if (list.isNotEmpty() || banks.isNotEmpty()) {
                     isEmpty = false
                     if (type == "pdf") {
@@ -216,8 +292,44 @@ class WifiServer(
                         filename = "Daily_${getFileNameDate()}.csv"
                     }
                 }
+            } else if (screen == "hist") {
+                // FIXED: Fetch whole Month for History Report
+                val (start, end) = getMonthRange(date)
+                val exps = ArrayList<ExpenseItem>()
+                val accs = ArrayList<AccountTransaction>()
+
+                val cal = Calendar.getInstance()
+                cal.timeInMillis = start
+
+                while(cal.timeInMillis <= end) {
+                    val d = cal.timeInMillis
+                    exps.addAll(dao.getExpensesByDateSync(d))
+                    accs.addAll(dao.getAccountTxByDateSync(d))
+                    cal.add(Calendar.DAY_OF_MONTH, 1)
+                }
+
+                if (exps.isNotEmpty() || accs.isNotEmpty()) {
+                    isEmpty = false
+
+                    // FIXED: Generate dummy banks from expense items to enable PDF grouping
+                    val dummyBanks = exps.map { it.bankName }.distinct().map { DailyBankBalance(date, it, 0.0, 0.0, 0.0) }
+
+                    if (type == "pdf") {
+                        // Pass dummyBanks instead of emptyList so data is visible
+                        bytes = ExportUtils.generateDailyPdf(exps, dummyBanks, curr.base, curr.target, curr.rate)
+                        mime = "application/pdf"; filename = "Monthly_Report.pdf"
+                    } else {
+                        val sb = StringBuilder()
+                        sb.append("Monthly Expense Report\n\n--- Expenses ---\n")
+                        sb.append(String(ExportUtils.generateDailyCsv(exps, dummyBanks, curr.base, curr.target, curr.rate)))
+                        sb.append("\n\n--- Accounts ---\n")
+                        sb.append(String(ExportUtils.generateAccountCsv(accs, curr.base, curr.target, curr.rate)))
+                        bytes = sb.toString().toByteArray()
+                        filename = "Monthly_Report.csv"
+                    }
+                }
             } else {
-                val list = dao.getAccountTxByDateSync(getTodayTimestamp())
+                val list = dao.getAccountTxByDateSync(date)
                 if (list.isNotEmpty()) {
                     isEmpty = false
                     if (type == "pdf") {
@@ -231,7 +343,7 @@ class WifiServer(
             }
         }
 
-        if (isEmpty) return newFixedLengthResponse(Response.Status.NO_CONTENT, MIME_PLAINTEXT, "")
+        if (isEmpty) return newFixedLengthResponse(Response.Status.NO_CONTENT, MIME_PLAINTEXT, "No data")
 
         val response = newFixedLengthResponse(Response.Status.OK, mime, ByteArrayInputStream(bytes), bytes.size.toLong())
         response.addHeader("Content-Disposition", "attachment; filename=\"$filename\"")
@@ -243,13 +355,15 @@ class WifiServer(
         calendar.set(Calendar.HOUR_OF_DAY, 0); calendar.set(Calendar.MINUTE, 0); calendar.set(Calendar.SECOND, 0); calendar.set(Calendar.MILLISECOND, 0)
         return calendar.timeInMillis
     }
-    private fun getDayFromDate(date: Long): String = SimpleDateFormat("EEEE", Locale.getDefault()).format(java.util.Date(date))
-    private fun getFileNameDate(): String = SimpleDateFormat("dd-MM-yyyy", Locale.getDefault()).format(java.util.Date())
+    private fun getDayFromDate(date: Long): String = SimpleDateFormat("EEEE", Locale.getDefault()).format(Date(date))
+    private fun getFileNameDate(): String = SimpleDateFormat("dd-MM-yyyy", Locale.getDefault()).format(Date())
 
     // --- DASHBOARD HTML ---
     private fun getHtmlDashboard(): String {
         val curr = currencyProvider()
         val rateStr = String.format("%.3f", curr.rate)
+        val isConvOn = curr.rate != 1.0
+        val todayStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
 
         fun currOpts(selected: String): String {
             val currs = listOf("USD", "INR", "EUR", "GBP", "JPY", "CAD", "AUD", "SGD")
@@ -263,350 +377,375 @@ class WifiServer(
             <!DOCTYPE html><html><head><title>ExpenseBuilder Web</title>
             <style>
                 body { font-family: 'Segoe UI', sans-serif; padding:0; margin:0; background:#f4f7f6; height:100vh; display:flex; flex-direction:column; font-size: 16px; }
-                header { background:#6200EE; color:white; padding:15px 30px; display:flex; justify-content:space-between; align-items:center; }
-                .app-title { font-size: 1.8rem; font-weight: bold; }
-                .curr-controls select { padding:5px; border-radius:4px; border:none; margin:0 5px; font-weight:bold; color:#333; font-size:1rem; }
-                      
-                /* Layout */
-                .nav-container { background: #fff; padding: 10px 30px; border-bottom: 1px solid #ddd; display:flex; gap: 15px; align-items:center; }
-                .main-body { flex:1; display:flex; overflow:hidden; position:relative; }
                 
-                /* Split View for Data */
-                .workspace-view { display: flex; width: 100%; height: 100%; }
-                .form-panel { width: 350px; min-width: 300px; max-width: 50%; background: white; border-right: 1px solid #ddd; padding: 20px; overflow-y: auto; }
-                .list-panel { flex:1; padding:20px; overflow-y: auto; }
+                header { background:#6200EE; color:white; padding:12px 30px; display:flex; justify-content:space-between; align-items:center; box-shadow:0 2px 5px rgba(0,0,0,0.2); }
+                .app-title { font-size: 1.6rem; font-weight: bold; }
                 
-                /* Full Screen Guide View */
-                .guide-view { width: 100%; height: 100%; overflow-y: auto; padding: 40px; box-sizing: border-box; background: #f9f9ff; }
-                .guide-content { max-width: 900px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+                .curr-controls { display:flex; align-items:center; gap:12px; background:rgba(255,255,255,0.15); padding:6px 15px; border-radius:30px; }
+                select.curr-select { padding:5px; border-radius:4px; border:none; font-weight:bold; color:#333; font-size:0.95rem; cursor:pointer; background:white; outline:none; min-width:80px; }
+                .curr-label { font-weight:600; font-size:0.9rem; color:white; white-space:nowrap; }
+
+                .switch { position:relative; display:inline-block; width:50px; height:26px; flex-shrink:0; }
+                .switch input { opacity:0; width:0; height:0; }
+                .slider { position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background-color:#ccc; transition:.4s; border-radius:34px; }
+                .slider:before { position:absolute; content:""; height:18px; width:18px; left:4px; bottom:4px; background-color:white; transition:.4s; border-radius:50%; }
+                input:checked + .slider { background-color:#03DAC6; }
+                input:checked + .slider:before { transform:translateX(24px); }
+                .rate-badge { background:white; color:#6200EE; padding:4px 10px; border-radius:4px; font-weight:bold; font-size:0.9rem; white-space:nowrap; }
+
+                .nav-container { background:#fff; padding:10px 30px; border-bottom:1px solid #ddd; display:flex; gap:15px; align-items:center; flex-shrink:0; }
+                .tab { padding:10px 24px; background:#f0f0f0; border-radius:25px; cursor:pointer; font-weight:600; color:#666; transition:0.3s; user-select:none; }
+                .tab.active { background:#6200EE; color:white; box-shadow:0 2px 5px rgba(98,0,238,0.3); }
+                .tab:hover:not(.active) { background:#e0e0e0; }
                 
-                /* Form Elements */
+                .date-box { display:flex; align-items:center; gap:8px; }
+                .date-box input { padding:8px; border:1px solid #ccc; border-radius:6px; font-family:inherit; font-size:1rem; }
+
+                .container { flex:1; display:flex; overflow:hidden; padding:20px; gap:20px; } 
+                .panel-form { width:360px; min-width:300px; background:white; border-radius:10px; padding:20px; overflow-y:auto; box-shadow:0 2px 8px rgba(0,0,0,0.05); }
+                .panel-list { flex:1; background:white; border-radius:10px; padding:20px; overflow-y:auto; box-shadow:0 2px 8px rgba(0,0,0,0.05); }
+                .panel-guide { flex:1; background:white; border-radius:10px; padding:40px; overflow-y:auto; box-shadow:0 2px 8px rgba(0,0,0,0.05); max-width:900px; margin:0 auto; }
+                
                 .form-group { margin-bottom:15px; }
-                label { display:block; font-size:0.9rem; color:#666; margin-bottom:5px; font-weight:600; }
-                input, select { width:100%; padding:10px; border:1px solid #ccc; border-radius:4px; box-sizing:border-box; font-size:1rem; }
-                button.add-btn { background:#6200EE; color:white; border:none; padding:14px; width:100%; border-radius:6px; font-weight:bold; cursor:pointer; margin-top:15px; font-size:1rem; }
-                button.add-btn:hover { background: #3700b3; }
+                label { display:block; font-size:0.9rem; color:#555; margin-bottom:6px; font-weight:600; }
+                input, select { width:100%; padding:10px; border:1px solid #ddd; border-radius:6px; box-sizing:border-box; font-size:0.95rem; }
                 
-                /* Tabs */
-                .tab { padding:10px 20px; background:#e0e0e0; border-radius:20px; cursor:pointer; font-weight:bold; color:#555; transition:0.2s; user-select: none; }
-                .tab.active { background:#6200EE; color:white; }
+                /* BUTTON STYLES */
+                button.add-btn { width:100%; background:#6200EE; color:white; border:none; padding:12px; margin-top:20px; border-radius:8px; font-weight:bold; cursor:pointer; transition:0.2s; font-size:1rem; box-shadow:0 2px 4px rgba(0,0,0,0.1); }
+                button.add-btn:hover { background:#3700b3; transform:translateY(-2px); box-shadow:0 4px 8px rgba(98,0,238,0.3); }
                 
-                /* Tables & Summaries */
-                table { width:100%; border-collapse:collapse; background:white; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
-                th, td { padding:15px; text-align:left; border-bottom:1px solid #eee; font-size:1rem; }
-                th { background:#f8f9fa; font-weight:bold; color:#444; }
-                .credit { color:green; font-weight:bold; background:#e8f5e9; padding:4px 8px; border-radius:4px; font-size:0.9rem; } 
-                .debit { color:red; font-weight:bold; background:#ffebee; padding:4px 8px; border-radius:4px; font-size:0.9rem; }
-                .export-bar { display: flex; justify-content: flex-end; gap: 15px; margin-bottom: 20px; }
-                .btn-export { text-decoration: none; font-size: 1.1rem; padding: 10px 20px; border-radius: 6px; color: white; font-weight: bold; display: flex; align-items: center; gap: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-                .xls { background: #1D6F42; } .pdf { background: #D32F2F; }
+                button.btn-sec { width:100%; background:#CFD8DC; color:#37474F; border:none; padding:12px; margin-top:0; border-radius:8px; font-weight:bold; cursor:pointer; transition:0.2s; font-size:1rem; }
+                button.btn-sec:hover { background:#B0BEC5; color:#263238; }
+
+                button.btn-green { width:100%; background:#4CAF50; color:white; border:none; padding:12px; margin-top:20px; border-radius:8px; font-weight:bold; cursor:pointer; transition:0.2s; font-size:1rem; box-shadow:0 2px 4px rgba(0,0,0,0.1); }
+                button.btn-green:hover { background:#388E3C; transform:translateY(-1px); box-shadow:0 4px 8px rgba(0,0,0,0.2); }
+                
+                button.btn-red { background:#D32F2F; color:white; border:none; padding:8px 12px; border-radius:6px; font-weight:bold; cursor:pointer; transition:0.2s; font-size:0.9rem; }
+                button.btn-red:hover { background:#B71C1C; }
+                
+                .bank-popup { background:#F3E5F5; border:2px dashed #7E57C2; padding:20px; border-radius:12px; margin-bottom:20px; }
+                
+                table { width:100%; border-collapse:collapse; margin-top:10px; }
+                th, td { padding:14px; text-align:left; border-bottom:1px solid #eee; }
+                th { background:#f9f9f9; font-weight:700; color:#555; font-size:0.9rem; }
+                tr:hover { background:#fafafa; }
+                .credit { color:#2e7d32; font-weight:bold; background:#e8f5e9; padding:4px 8px; border-radius:12px; font-size:0.85rem; }
+                .debit { color:#c62828; font-weight:bold; background:#ffebee; padding:4px 8px; border-radius:12px; font-size:0.85rem; }
+                
+                .actions-bar { display:flex; justify-content:flex-end; gap:12px; margin-bottom:15px; }
+                .btn-dl { text-decoration:none; padding:10px 20px; border-radius:6px; color:white; font-weight:bold; font-size:0.95rem; transition:0.3s; box-shadow:0 2px 4px rgba(0,0,0,0.15); display:inline-block; }
+                .xls { background:linear-gradient(135deg, #1D6F42, #43A047); }
+                .pdf { background:linear-gradient(135deg, #B71C1C, #E53935); }
+                .btn-dl:hover { transform:translateY(-2px); box-shadow:0 5px 12px rgba(0,0,0,0.2); opacity:0.95; }
                 
                 .hidden { display:none !important; }
-                .btn-del { border:none; background:none; color:#aaa; font-size:1.4rem; cursor:pointer; }
-                .btn-del:hover { color:red; }
-                
-                .radio-group { display: flex; gap: 15px; align-items: center; }
-                .radio-item { display: flex; align-items: center; cursor: pointer; }
-                .radio-item input { width: auto; margin-right: 8px; transform: scale(1.2); }
-                .radio-item label { margin: 0; cursor: pointer; }
-                
-                /* Summary Styling */
-                .summary-card { margin-top: 20px; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-                .summary-bank { margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
-                .summary-bank h4 { margin: 0 0 5px 0; color: #6200EE; font-size: 1.1rem; }
-                .sum-row { display: flex; justify-content: space-between; font-size: 0.95rem; margin-bottom: 4px; }
-                .grand-total { font-size: 1.2rem; font-weight: bold; text-align: right; margin-top: 15px; color: #333; }
-                .link-btn { color: #6200EE; cursor: pointer; font-size: 0.9rem; font-weight: bold; text-decoration: underline; margin-left: 10px; }
-                #bankForm { border: 2px dashed #6200EE; padding: 15px; background: #f9f9ff; border-radius: 8px; margin-bottom: 20px; }
-                
-                /* Guide Styling */
-                .guide-section { margin-bottom: 30px; }
-                .guide-section h2 { color: #333; margin-bottom: 20px; text-align: center; border-bottom: 3px solid #6200EE; display: inline-block; padding-bottom: 10px; }
-                .guide-section h3 { color: #6200EE; border-bottom: 2px solid #eee; padding-bottom: 8px; margin-top: 0; }
-                .guide-section ul { line-height: 1.8; color: #444; font-size: 1.05rem; }
-                .guide-warning { background: #fff3e0; padding: 15px; border-left: 5px solid #ff9800; margin: 15px 0; color: #d84315; border-radius: 4px; }
-                .dev-links { text-align: center; margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; }
-                .dev-links a { display: inline-block; margin: 0 15px; color: #0077b5; font-weight: bold; text-decoration: none; font-size: 1.1rem; padding: 10px 20px; border: 1px solid #0077b5; border-radius: 5px; transition: 0.2s; }
-                .dev-links a:hover { background: #0077b5; color: white; }
+                .guide-sec { margin-bottom:30px; }
+                .guide-sec h3 { color:#6200EE; border-bottom:1px solid #eee; padding-bottom:5px; }
+                .dev-links { text-align:center; margin-top:40px; padding-top:20px; border-top:1px solid #eee; }
+                .dev-links a { display:inline-block; margin:0 15px; color:#0077b5; font-weight:bold; text-decoration:none; padding:10px 20px; border:2px solid #0077b5; border-radius:30px; transition:0.3s; }
+                .dev-links a:hover { background:#0077b5; color:white; }
+
+                /* SUMMARY STYLES */
+                .sum-bank-card { border:1px solid #eee; border-radius:8px; overflow:hidden; margin-bottom:15px; }
+                .sum-header { background:#f5f5f5; padding:8px 12px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #ddd; }
+                .sum-header h4 { margin:0; color:#1A237E; font-size:1rem; }
+                .sum-table { width:100%; font-size:0.9rem; }
+                .sum-table td { padding:6px 12px; border-bottom:1px dashed #eee; }
+                .sum-label { font-weight:600; color:#666; width:80px; }
+                .sum-val { font-family:monospace; }
+                .sum-pos { color:#2e7d32; font-weight:bold; } .sum-neg { color:#c62828; font-weight:bold; }
+                .grand-total { text-align:right; font-size:1.2rem; font-weight:bold; color:#1A237E; margin-top:20px; border-top:2px solid #eee; padding-top:10px; }
+
             </style>
             </head><body>
+            
             <header>
                 <div class="app-title">ExpenseBuilder 💻</div>
                 <div class="curr-controls">
-                    <select id="baseCurr" onchange="updCurr()">${currOpts(curr.base)}</select>
-                    <span>&rarr;</span>
-                    <select id="targetCurr" onchange="updCurr()">${currOpts(curr.target)}</select>
-                    <span style="margin-left:10px; font-size:1rem; background:rgba(255,255,255,0.2); padding:5px 12px; border-radius:4px;">Rate: $rateStr</span>
+                    <span class="curr-label">Base:</span>
+                    <select id="baseCurr" class="curr-select" onchange="updCurr()">${currOpts(curr.base)}</select>
+                    <div style="width:1px; height:20px; background:rgba(255,255,255,0.4); margin:0 5px;"></div>
+                    <span class="curr-label">Convert:</span>
+                    <label class="switch">
+                        <input type="checkbox" id="convToggle" ${if(isConvOn) "checked" else ""}>
+                        <span class="slider round"></span>
+                    </label>
+                    <span id="targetSection" style="display:flex; align-items:center; gap:8px; margin-left:10px;">
+                        <span style="color:white; font-size:1.2rem;">&rarr;</span>
+                        <select id="targetCurr" class="curr-select" onchange="updCurr()">${currOpts(curr.target)}</select>
+                        <span class="rate-badge">Rate: $rateStr</span>
+                    </span>
                 </div>
             </header>
             
             <div class="nav-container">
-                <div class="tab active" id="tabD" onclick="sw('daily')">Daily Expense</div>
-                <div class="tab" id="tabA" onclick="sw('acc')">Accounts</div>
-                <div class="tab" id="tabG" onclick="sw('guide')">App Guide & Tips</div>
+                <div style="display:flex; gap:10px;">
+                    <div class="tab active" id="tabD" onclick="setTab('daily')">Daily Expense</div>
+                    <div class="tab" id="tabA" onclick="setTab('acc')">Accounts</div>
+                    <div class="tab" id="tabH" onclick="setTab('hist')">History</div>
+                    <div class="tab" id="tabG" onclick="setTab('guide')">Guide</div>
+                </div>
+                <div class="date-box">
+                    <span style="font-weight:bold; color:#555;">Date:</span>
+                    <input type="date" id="dateInput" value="$todayStr" onchange="refreshAll()">
+                </div>
             </div>
-
-            <div class="main-body">
+            
+            <div class="container">
+                <div class="panel-form" id="panelForm">
+                    <div id="bankForm" class="bank-popup hidden">
+                        <h4 style="margin-top:0; color:#4A148C;">Add New Bank</h4>
+                        <label>Name</label><input id="bn" placeholder="e.g. HDFC">
+                        <label>Opening Balances ($rateStr)</label>
+                        <input id="bc" type="number" placeholder="Cash" style="margin-bottom:8px;">
+                        <input id="bq" type="number" placeholder="Cheque" style="margin-bottom:8px;">
+                        <input id="bd" type="number" placeholder="Card">
+                        <div style="display:flex; gap:10px; margin-top:15px;">
+                            <button class="btn-green" style="margin-top:0" onclick="addBank()">Save</button>
+                            <button class="btn-sec" onclick="el('bankForm').classList.add('hidden')">Cancel</button>
+                        </div>
+                    </div>
+                    
+                    <div id="dailyForm">
+                        <h3 style="display:flex; justify-content:space-between; margin-top:0;">Add Expense <span style="font-size:0.8rem; color:#6200EE; cursor:pointer;" onclick="el('bankForm').classList.remove('hidden')">+ Bank</span></h3>
+                        <label>Person</label><input id="dn">
+                        <label>Bank</label><select id="db"><option>Loading...</option></select>
+                        <label>Category</label><select id="dc"><option>Loading...</option></select>
+                        <label>Item</label><input id="di">
+                        <label>Info</label><input id="dinf" placeholder="Optional">
+                        <label>Qty</label><input type="number" id="dq">
+                        <label>Unit</label>
+                        <select id="du">
+                            <option>PIECE</option><option>KG</option><option>GRAM</option><option>LITER</option><option>ML</option><option>DOZEN</option><option>Not Applicable</option><option>Not Available</option>
+                        </select>
+                        <label>Price (${curr.base})</label><input id="dp" type="number">
+                        <label>Type / Mode</label>
+                        <div style="display:flex; gap:8px;">
+                            <select id="dt"><option value="DEBIT">Debit</option><option value="CREDIT">Credit</option></select>
+                            <select id="dm"><option>Cash</option><option>Cheque</option><option>Card/UPI</option></select>
+                        </div>
+                        <button class="btn-green" onclick="addD()">ADD ITEM</button>
+                    </div>
+                    
+                    <div id="accForm" class="hidden">
+                        <h3 style="margin-top:0;">Add Transaction</h3>
+                        <label>From: Holder / Bank / Acc</label>
+                        <input id="ah" placeholder="Holder"><input id="ab" placeholder="Bank" style="margin-top:5px;"><input id="aan" placeholder="Acc Num" style="margin-top:5px;">
+                        
+                        <label style="margin-top:10px;">To: Beneficiary / Bank / Acc</label>
+                        <input id="atn" placeholder="Name"><input id="atb" placeholder="Bank" style="margin-top:5px;"><input id="atan" placeholder="Acc Num" style="margin-top:5px;">
+                        
+                        <label>Amount (${curr.base})</label><input id="aa" type="number">
+                        
+                        <label>Type / Mode</label>
+                        <div style="display:flex; gap:8px;">
+                            <select id="at"><option value="DEBIT">Debit</option><option value="CREDIT">Credit</option></select>
+                            <select id="am"><option>Cash</option><option>Cheque</option><option>Card/UPI</option></select>
+                        </div>
+                        <button class="btn-green" onclick="addA()">ADD TRANSACTION</button>
+                    </div>
+                </div>
                 
-                <div id="workspaceView" class="workspace-view">
-                    <div class="form-panel">
-                        <div id="bankForm" class="hidden">
-                            <h4 style="margin-top:0;">Add New Bank / Source</h4>
-                            <div class="form-group"><label>Bank Name</label><input id="b_name" placeholder="e.g. HDFC"></div>
-                            <div class="form-group"><label>Opening Balances</label>
-                                <div style="display:flex;gap:5px;">
-                                    <input id="b_cash" placeholder="Cash" type="number">
-                                    <input id="b_chq" placeholder="Chq" type="number">
-                                    <input id="b_card" placeholder="Card" type="number">
-                                </div>
-                            </div>
-                            <div style="display:flex; gap:10px;">
-                                <button class="add-btn" style="background:#4CAF50; margin-top:0" onclick="addBank()">Save</button>
-                                <button class="add-btn" style="background:#ccc; margin-top:0" onclick="toggleBankForm()">Cancel</button>
-                            </div>
-                        </div>
-
-                        <h3 style="margin-top:0; font-size:1.4rem; border-bottom:2px solid #eee; padding-bottom:10px;">Add Entry</h3>
-                        <div id="dailyForm">
-                             <div class="form-group"><label>Person Name</label><input id="d_name"></div>
-                             <div class="form-group"><label>Select Bank / Source <span class="link-btn" onclick="toggleBankForm()">[+] Add New</span></label><select id="d_bank"><option value="">Loading Banks...</option></select></div>
-                             <div class="form-group"><label>Category</label><select id="d_cat"><option value="">Loading Cats...</option></select></div>
-                             <div class="form-group"><label>Item Name</label><input id="d_item"></div>
-                             <div class="form-group"><label>Additional Info (Optional)</label><input id="d_info"></div>
-                             <div class="form-group"><label>Quantity</label><input type="number" id="d_qty"></div>
-                             <div class="form-group"><label>Unit</label><select id="d_unit"><option>PIECE</option><option>KG</option><option>GRAM</option><option>LITER</option><option>ML</option><option>Not Applicable</option><option>Not Available</option></select></div>
-                             <div class="form-group"><label>Price (${curr.base})</label><input type="number" id="d_price"></div>
-                             <div class="form-group"><label>Type</label><select id="d_type"><option value="DEBIT">Debit</option><option value="CREDIT">Credit</option></select></div>
-                             <div class="form-group">
-                                <label>Payment Mode</label>
-                                <div class="radio-group">
-                                    <div class="radio-item"><input type="radio" name="d_mode" value="Cash" id="dm1" checked><label for="dm1">Cash</label></div>
-                                    <div class="radio-item"><input type="radio" name="d_mode" value="Cheque" id="dm2"><label for="dm2">Cheque</label></div>
-                                    <div class="radio-item"><input type="radio" name="d_mode" value="Card/UPI" id="dm3"><label for="dm3">Card</label></div>
-                                </div>
-                            </div>
-                             <button class="add-btn" onclick="addD()">ADD ITEM</button>
-                        </div>
-                        <div id="accForm" class="hidden">
-                             <div class="form-group"><label>From Holder</label><input id="a_hold"></div>
-                             <div class="form-group"><label>From Bank</label><input id="a_bank"></div>
-                             <div class="form-group"><label>From Acc</label><input id="a_anum"></div>
-                             <div class="form-group"><label>To Beneficiary</label><input id="a_ben"></div>
-                             <div class="form-group"><label>To Bank</label><input id="a_tbank"></div>
-                             <div class="form-group"><label>To Acc</label><input id="a_tnum"></div>
-                             <div class="form-group"><label>Amount (${curr.base})</label><input type="number" id="a_amt"></div>
-                             <div class="form-group"><label>Type</label><select id="a_type"><option value="DEBIT">Debit</option><option value="CREDIT">Credit</option></select></div>
-                             <div class="form-group">
-                                <label>Payment Mode</label>
-                                <div class="radio-group">
-                                    <div class="radio-item"><input type="radio" name="a_mode" value="Cash" id="am1" checked><label for="am1">Cash</label></div>
-                                    <div class="radio-item"><input type="radio" name="a_mode" value="Cheque" id="am2"><label for="am2">Cheque</label></div>
-                                    <div class="radio-item"><input type="radio" name="a_mode" value="Card/UPI" id="am3"><label for="am3">Card</label></div>
-                                </div>
-                            </div>
-                             <button class="add-btn" onclick="addA()">ADD TXN</button>
-                        </div>
+                <div class="panel-list" id="panelList">
+                    <div class="actions-bar">
+                        <a href="javascript:dl('csv')" class="btn-dl xls">📊 Download Excel</a>
+                        <a href="javascript:dl('pdf')" class="btn-dl pdf">📄 Download PDF</a>
                     </div>
-
-                    <div class="list-panel">
-                        <div class="export-bar"><button onclick="dl('csv')" class="btn-export xls">📊 Download Excel</button><button onclick="dl('pdf')" class="btn-export pdf">📄 Download PDF</button></div>
-                        <div id="listD"><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Type</th><th>Mode</th><th></th></tr></thead><tbody></tbody></table><div id="summaryD" class="summary-card hidden"></div></div>
-                        <div id="listA" class="hidden"><table><thead><tr><th>Details</th><th>Amount</th><th>Type</th><th>Mode</th><th></th></tr></thead><tbody></tbody></table></div>
+                    <div id="listD"><table><thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Type</th><th>Mode</th><th>Act</th></tr></thead><tbody></tbody></table><div id="summD" class="summary-card hidden"></div></div>
+                    <div id="listA" class="hidden"><table><thead><tr><th>Details</th><th>Amount</th><th>Type</th><th>Mode</th><th>Act</th></tr></thead><tbody></tbody></table></div>
+                    <div id="listH" class="hidden">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                            <h3 style="color:#6200EE; margin:0;">History (Monthly View)</h3>
+                            <button class="btn-red" onclick="clearHist()">Clear Date History</button>
+                        </div>
+                        <table><thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Type</th><th>Mode</th></tr></thead><tbody></tbody></table>
                     </div>
                 </div>
-
-                <div id="guideView" class="guide-view hidden">
-                    <div class="guide-content">
-                        <div style="text-align:center;"><h2>App Use Guide & Tips</h2></div>
-                        
-                        <div class="guide-section">
-                            <h3>1. Getting Started: Banks & Sources</h3>
-                            <ul>
-                                <li>Before adding expenses, you must add a <b>Bank or Money Source</b>.</li>
-                                <li>Use the <b>[+] Add New</b> button next to the Bank dropdown in the form.</li>
-                                <li>Enter the Opening Balance for that source (e.g., 'HDFC' with 5000 opening).</li>
-                                <li>⚠️ <b>Security Check:</b> Add at least 1 entry through the mobile UI first to initialize the database securely.</li>
-                            </ul>
-                        </div>
-
-                        <div class="guide-section">
-                            <h3>2. Credit and Debit</h3>
-                            <ul>
-                                <li><b style="color:green">Credit (+)</b>: Money deposited / Money Refunded / Money Received</li>
-                                <li><b style="color:red">Debit (-)</b>: Money deducted / Money Paid / Money Spent</li>
-                            </ul>
-                        </div>
-                        
-                        <div class="guide-section">
-                            <h3>3. Managing Expenses</h3>
-                            <ul>
-                                <li>Select the specific <b>Bank</b> for every expense entry.</li>
-                                <li>Use the <b>Additional Info</b> field for details like "Dinner with team" or "Taxi to Airport".</li>
-                                <li>Quantity and Unit are optional but recommended for inventory tracking.</li>
-                            </ul>
-                        </div>
-
-                        <div class="guide-section">
-                            <h3>4. Currency & Reports (Crucial Tips)</h3>
-                            <div class="guide-warning">
-                                <strong>⚠️ IMPORTANT:</strong> Reports are generated based on the currently selected <b>Base Currency</b>.
-                            </div>
-                            <ul>
-                                <li>The app updates exchange rates automatically every 24 hours.</li>
-                                <li><b>Tip:</b> If you have accounts in different currencies (e.g., INR and SGD), switch the Base Currency to the relevant one before generating reports. This ensures opening balances logically match the currency context.</li>
-                            </ul>
-                        </div>
-
-                        <div class="guide-section">
-                            <h3>5. Web Dashboard "Catches"</h3>
-                            <div class="guide-warning">
-                                <strong>⚠️ REFRESH WARNING:</strong> Changing the currency using the dropdown above will <b>refresh the page</b> immediately.
-                            </div>
-                            <ul>
-                                <li>Ensure you have saved any open form data before switching currencies.</li>
-                                <li>Keep the mobile app open while using the Web Dashboard.</li>
-                            </ul>
-                        </div>
-                        
-
-                            <div class="dev-links">
-                                <a href="https://www.linkedin.com/in/sankalp-indish/" target="_blank">LinkedIn Profile</a>
-                                <a href="https://github.com/DevelopingGod" target="_blank">GitHub Repository</a>
-                            </div>
-
-                        
-                        
+                
+                <div class="panel-guide hidden" id="panelGuide">
+                    <h2>User Guide & Tips</h2>
+                    <div class="guide-sec">
+                        <h3>1. Getting Started</h3>
+                        <ul>
+                            <li><b>Add Bank:</b> Click "+ Bank" in the Daily Expense form. Enter Opening Balance.</li>
+                            <li><b>Date Selection:</b> Use the Date Picker in the top-right corner to view or add data for past or future dates.</li>
+                        </ul>
                     </div>
+                    <div class="guide-sec">
+                        <h3>2. Managing Expenses</h3>
+                        <ul>
+                            <li>Select the correct <b>Bank</b> to track balances.</li>
+                            <li>Use <b>DOZEN</b> for bulk items like fruits.</li>
+                            <li><b>Additional Info</b> helps searching later.</li>
+                        </ul>
+                    </div>
+                    <div class="guide-sec">
+                        <h3>3. Accounts & History</h3>
+                        <ul>
+                            <li><b>Accounts Tab:</b> Log transfers (Loans, Rent, Salary).</li>
+                            <li><b>History Tab:</b> Shows all transactions for the <b>Entire Month</b> of the selected date.</li>
+                            <li><b>Clear History:</b> Use the red button to delete records for the *specific selected date*.</li>
+                            <li><b>Toggle Convert:</b> Turn ON to see estimated foreign values. Turn OFF to hide.</li>
+                        </ul>
+                    </div>
+                    <div class="dev-links"><a href="https://www.linkedin.com/in/sankalp-indish/" target="_blank">LinkedIn</a><a href="https://github.com/DevelopingGod" target="_blank">GitHub</a></div>
                 </div>
-
             </div>
+            
             <script>
-                document.getElementById('baseCurr').value = "${curr.base}";
-                document.getElementById('targetCurr').value = "${curr.target}";
-                let curS = 'daily';
-                const defaults = ["Home Expenses", "Snacks & Fruit", "Utilities", "CNG/Petrol", "Assets", "Medical Expenses", "Education Expenses", "Rent", "Loans", "Others"];
-
-                function sw(s){ curS=s; 
-                    // 1. Handle Tabs
-                    document.getElementById('tabD').className = s==='daily'?'tab active':'tab';
-                    document.getElementById('tabA').className = s==='acc'?'tab active':'tab';
-                    document.getElementById('tabG').className = s==='guide'?'tab active':'tab';
-
-                    // 2. Handle Views
-                    if (s === 'guide') {
-                        document.getElementById('workspaceView').classList.add('hidden');
-                        document.getElementById('guideView').classList.remove('hidden');
-                    } else {
-                        document.getElementById('workspaceView').classList.remove('hidden');
-                        document.getElementById('guideView').classList.add('hidden');
-                        
-                        // Sub-toggle for daily vs account
-                        document.getElementById('dailyForm').classList.toggle('hidden', s!=='daily');
-                        document.getElementById('accForm').classList.toggle('hidden', s==='daily');
-                        document.getElementById('listD').classList.toggle('hidden', s!=='daily');
-                        document.getElementById('listA').classList.toggle('hidden', s==='daily');
-                        if(s==='daily') ldD(); else ldA();
+                const el = (id) => document.getElementById(id);
+                let curTab = 'daily';
+                
+                const toggle = el('convToggle');
+                const targetSec = el('targetSection');
+                
+                function updateUI() { targetSec.style.display = toggle.checked ? 'flex' : 'none'; }
+                toggle.addEventListener('change', updateUI);
+                el('baseCurr').value = "${curr.base}";
+                el('targetCurr').value = "${curr.target}";
+                if(${isConvOn}) { toggle.checked = true; targetSec.classList.remove('hidden'); } else { toggle.checked = false; }
+                updateUI(); 
+                
+                function setTab(t) {
+                    curTab = t;
+                    ['tabD','tabA','tabH','tabG'].forEach(id => el(id).className = 'tab');
+                    ['panelForm','panelList','panelGuide'].forEach(id => el(id).classList.add('hidden'));
+                    ['dailyForm','accForm','listD','listA','listH'].forEach(id => el(id).classList.add('hidden'));
+                    
+                    if(t === 'daily') {
+                        el('tabD').className = 'tab active';
+                        el('panelForm').classList.remove('hidden');
+                        el('panelList').classList.remove('hidden');
+                        el('dailyForm').classList.remove('hidden');
+                        el('listD').classList.remove('hidden');
+                        ldD();
+                    } else if(t === 'acc') {
+                        el('tabA').className = 'tab active';
+                        el('panelForm').classList.remove('hidden');
+                        el('panelList').classList.remove('hidden');
+                        el('accForm').classList.remove('hidden');
+                        el('listA').classList.remove('hidden');
+                        ldA();
+                    } else if(t === 'hist') {
+                        el('tabH').className = 'tab active';
+                        el('panelList').classList.remove('hidden');
+                        el('listH').classList.remove('hidden');
+                        ldH();
+                    } else if(t === 'guide') {
+                        el('tabG').className = 'tab active';
+                        el('panelGuide').classList.remove('hidden');
                     }
                 }
+                
+                const getDParam = () => `?date=` + el('dateInput').value;
+                function refreshAll() { if(curTab==='daily') ldD(); else if(curTab==='acc') ldA(); else if(curTab==='hist') ldH(); }
+                function post(u,d,cb){ d.date = el('dateInput').value; fetch(u,{method:'POST', body:JSON.stringify(d)}).then(cb); }
+                function updCurr() { post('/api/setCurrency', {base:el('baseCurr').value, target:el('targetCurr').value}, ()=>location.reload()); }
+                
+                // FIXED: Try/Catch for Empty Downloads
+                function dl(t) { 
+                   let u = `/api/export?type=${'$'}{t}&screen=${'$'}{curTab}&date=` + el('dateInput').value;
+                   fetch(u).then(r => {
+                       if(r.status === 204) alert("No data available to download.");
+                       else window.location.href = u;
+                   }).catch(e => alert("Download failed: " + e));
+                }
 
-                function ldD(){ 
-                    Promise.all([fetch('/api/expenses').then(r=>r.json()), fetch('/api/banks').then(r=>r.json())]).then(([exps, banks]) => {
-                        let h=''; exps.forEach(i=>{ 
-                            let info = i.additionalInfo ? `<br><i style='color:#555;font-size:0.8rem'>(${'$'}{i.additionalInfo})</i>` : '';
-                            let bank = `<br><b style='color:#00008B;font-size:0.8rem'>[${'$'}{i.bankName}]</b>`;
-                            h+=`<tr><td><b>${'$'}{i.itemName}</b>${'$'}{info}${'$'}{bank}<br><small style='color:#777'>${'$'}{i.category}</small></td><td>${'$'}{i.quantity} ${'$'}{i.unit}</td><td>${'$'}{i.totalPrice}</td><td><span class="${'$'}{i.type==='CREDIT'?'credit':'debit'}">${'$'}{i.type}</span></td><td>${'$'}{i.paymentMode}</td><td style="text-align:right"><button class="btn-del" onclick="del('deleteExpense',${'$'}{i.id})">&times;</button></td></tr>`}); 
-                        document.querySelector('#listD tbody').innerHTML=h||'<tr><td colspan="6" align="center">No entries</td></tr>';
+                function clearHist() { if(confirm('Permanently delete all data for this DATE?')) post('/api/clearHistory', {}, refreshAll); }
+                
+                function addBank() { post('/api/addBank', { bankName:el('bn').value, opCash:el('bc').value, opCheque:el('bq').value, opCard:el('bd').value }, ()=>{ el('bankForm').classList.add('hidden'); loadBanks(); ldD(); }); }
+                function delBank(n) { if(confirm('Delete Bank?')) post('/api/deleteBank', {bankName:n}, ldD); }
+                function del(api, id) { if(confirm('Delete?')) post('/api/'+api, {id:id}, refreshAll); }
+                
+                function addD() {
+                    if(!el('dn').value || !el('db').value || !el('dc').value || !el('di').value || !el('dp').value) return alert("Fill Mandatory Fields: Person, Bank, Category, Item, Price!");
+                    post('/api/addExpense', {
+                        personName:el('dn').value, bankName:el('db').value, category:el('dc').value, itemName:el('di').value, additionalInfo:el('dinf').value,
+                        quantity:el('dq').value, unit:el('du').value, price:el('dp').value, type:el('dt').value, paymentMode:el('dm').value
+                    }, ldD);
+                }
+                function addA() {
+                     if(!el('ah').value || !el('ab').value || !el('aan').value || !el('atn').value || !el('aa').value) return alert("Fill Mandatory Fields: Holder, Bank, Acc Num, Beneficiary, Amount!");
+                     post('/api/addAccount', { holder:el('ah').value, bank:el('ab').value, accNum:el('aan').value, benName:el('atn').value, toBank:el('atb').value, toAccNum:el('atan').value, amount:el('aa').value, type:el('at').value, paymentMode:el('am').value }, ldA);
+                }
+                
+                function loadBanks() { fetch('/api/banks'+getDParam()).then(r=>r.json()).then(d=>{ let h=d.length?'':'<option>No Banks</option>'; d.forEach(b=>h+=`<option>${'$'}{b.bankName}</option>`); el('db').innerHTML=h; }); }
+                function loadCats() { fetch('/api/categories').then(r=>r.json()).then(d=>{ let h=''; [...new Set(["Home Expenses","Snacks & Fruit","Utilities","CNG/Petrol","Assets","Medical Expenses","Education Expenses","Rent","Loans","Others",...d])].sort().forEach(c=>h+=`<option>${'$'}{c}</option>`); el('dc').innerHTML=h; }); }
+                
+                function ldD() {
+                    Promise.all([fetch('/api/expenses'+getDParam()).then(r=>r.json()), fetch('/api/banks'+getDParam()).then(r=>r.json())]).then(([ex, bk]) => {
+                        let h = '';
+                        ex.forEach(e => {
+                            h += `<tr><td><b>${'$'}{e.itemName}</b><br><small>${'$'}{e.bankName} | ${'$'}{e.category}</small></td>
+                                  <td>${'$'}{e.quantity} ${'$'}{e.unit}</td><td>${'$'}{e.totalPrice}</td>
+                                  <td><span class="${'$'}{e.type==='CREDIT'?'credit':'debit'}">${'$'}{e.type}</span></td>
+                                  <td>${'$'}{e.paymentMode}</td>
+                                  <td><button onclick="del('deleteExpense',${'$'}{e.id})" style="color:red;border:none;cursor:pointer;font-weight:bold;background:none;">X</button></td></tr>`;
+                        });
+                        el('listD').querySelector('tbody').innerHTML = h || '<tr><td colspan="6">No Expenses for this date</td></tr>';
                         
-                        if(banks.length > 0) {
-                            let s = '<h3>Closing Summary (${curr.base})</h3>';
+                        if(bk.length) {
+                            let s = '<h4>Closing Summary (${curr.base})</h4>';
                             let gt = 0;
-                            banks.forEach(b => {
-                                let bExps = exps.filter(e => e.bankName === b.bankName);
-                                let calc = (m, op) => {
-                                    let cr = bExps.filter(e => e.paymentMode === m && e.type === 'CREDIT').reduce((a,c)=>a+c.totalPrice,0);
-                                    let dr = bExps.filter(e => e.paymentMode === m && e.type === 'DEBIT').reduce((a,c)=>a+c.totalPrice,0);
-                                    return op + cr - dr;
+                            bk.forEach(b => {
+                                let bex = ex.filter(x => x.bankName === b.bankName);
+                                let calc = (m) => {
+                                    let cr = bex.filter(x => x.paymentMode === m && x.type === 'CREDIT').reduce((a,c)=>a+c.totalPrice,0);
+                                    let dr = bex.filter(x => x.paymentMode === m && x.type === 'DEBIT').reduce((a,c)=>a+c.totalPrice,0);
+                                    return cr - dr;
                                 };
-                                let cCash = calc('Cash', b.openingCash);
-                                let cChq = calc('Cheque', b.openingCheque);
-                                let cCard = calc('Card/UPI', b.openingCard);
-                                let tot = cCash + cChq + cCard;
+                                let netC=calc('Cash'), netQ=calc('Cheque'), netK=calc('Card/UPI');
+                                let clCash = b.openingCash + netC;
+                                let clChq = b.openingCheque + netQ;
+                                let clCard = b.openingCard + netK;
+                                let tot = clCash + clChq + clCard;
                                 gt += tot;
-                                s += `<div class="summary-bank">
-                                        <div style="display:flex; justify-content:space-between; align-items:center;">
-                                            <h4 style="margin:0;">${'$'}{b.bankName}</h4>
-                                            <span style="cursor:pointer; color:red; font-weight:bold;" onclick="delBank('${'$'}{b.bankName}')" title="Delete Bank">&times;</span>
-                                        </div>
-                                        <div class="sum-row"><span>Cash:</span><b>${'$'}{cCash.toFixed(2)}</b></div>
-                                        <div class="sum-row"><span>Cheque:</span><b>${'$'}{cChq.toFixed(2)}</b></div>
-                                        <div class="sum-row"><span>Card/UPI:</span><b>${'$'}{cCard.toFixed(2)}</b></div>
-                                        <div class="sum-row" style="margin-top:5px;color:#6200EE"><span>Total:</span><b>${'$'}{tot.toFixed(2)}</b></div>
+                                
+                                s += `<div class="sum-bank-card">
+                                        <div class="sum-header"><h4>${'$'}{b.bankName}</h4> <span onclick="delBank('${'$'}{b.bankName}')" style="cursor:pointer;color:red;font-weight:bold;">&times;</span></div>
+                                        <table class="sum-table">
+                                            <tr><td class="sum-label">Opening</td> <td class="sum-val">C: ${'$'}{b.openingCash}</td> <td class="sum-val">Q: ${'$'}{b.openingCheque}</td> <td class="sum-val">D: ${'$'}{b.openingCard}</td></tr>
+                                            <tr><td class="sum-label">Activity</td> <td class="sum-val ${'$'}{netC>=0?'sum-pos':'sum-neg'}">${'$'}{netC}</td> <td class="sum-val ${'$'}{netQ>=0?'sum-pos':'sum-neg'}">${'$'}{netQ}</td> <td class="sum-val ${'$'}{netK>=0?'sum-pos':'sum-neg'}">${'$'}{netK}</td></tr>
+                                            <tr><td class="sum-label">Closing</td> <td class="sum-val"><b>${'$'}{clCash.toFixed(2)}</b></td> <td class="sum-val"><b>${'$'}{clChq.toFixed(2)}</b></td> <td class="sum-val"><b>${'$'}{clCard.toFixed(2)}</b></td></tr>
+                                        </table>
                                       </div>`;
                             });
                             s += `<div class="grand-total">GRAND TOTAL: ${'$'}{gt.toFixed(2)}</div>`;
-                            document.getElementById('summaryD').innerHTML = s;
-                            document.getElementById('summaryD').classList.remove('hidden');
-                        } else { document.getElementById('summaryD').classList.add('hidden'); }
+                            el('summD').innerHTML = s; el('summD').classList.remove('hidden');
+                        } else el('summD').classList.add('hidden');
                     });
                 }
-
-                function ldA(){ fetch('/api/accounts').then(r=>r.json()).then(d=>{ 
-                    let h=''; d.forEach(i=>{ h+=`<tr><td><b>${'$'}{i.beneficiaryName}</b><br><small>To: ${'$'}{i.toBankName}</small></td><td>${'$'}{i.amount}</td><td><span class="${'$'}{i.type==='CREDIT'?'credit':'debit'}">${'$'}{i.type}</span></td><td>${'$'}{i.paymentMode}</td><td style="text-align:right"><button class="btn-del" onclick="del('deleteAccount',${'$'}{i.id})">&times;</button></td></tr>`}); 
-                    document.querySelector('#listA tbody').innerHTML=h||'<tr><td colspan="5" align="center">No transactions</td></tr>'; 
-                }); }
-
-                function loadCats() { fetch('/api/categories').then(r=>r.json()).then(dbCats=>{ 
-                    let allCats = [...new Set([...defaults, ...dbCats])].sort();
-                    let h='<option value="">Select Category...</option>'; 
-                    allCats.forEach(c=>{ h+=`<option value="${'$'}{c}">${'$'}{c}</option>` }); 
-                    document.getElementById('d_cat').innerHTML=h; 
-                }); }
-
-                function loadBanks() { fetch('/api/banks').then(r=>r.json()).then(banks=>{ 
-                    let h=''; 
-                    if(banks.length === 0) h='<option value="">No Banks Added</option>';
-                    else banks.forEach(b=>{ h+=`<option value="${'$'}{b.bankName}">${'$'}{b.bankName}</option>` }); 
-                    document.getElementById('d_bank').innerHTML=h; 
-                }); }
-
-                function toggleBankForm() { document.getElementById('bankForm').classList.toggle('hidden'); }
-
-                function addBank() {
-                    if(!v('b_name')) return alert("Enter Bank Name");
-                    post('/api/addBank', { bankName:v('b_name'), opCash:v('b_cash'), opCheque:v('b_chq'), opCard:v('b_card') }, () => {
-                        toggleBankForm();
-                        loadBanks(); 
-                        ldD();
-                    });
-                }
-
-                function delBank(name) {
-                    if(confirm("Are you sure you want to delete Bank '" + name + "' and its opening balance?")) {
-                        post('/api/deleteBank', {bankName: name}, () => {
-                            loadBanks(); 
-                            ldD(); 
+                
+                function ldA() {
+                    fetch('/api/accounts'+getDParam()).then(r=>r.json()).then(d => {
+                        let h = '';
+                        d.forEach(a => {
+                             h += `<tr><td><b>${'$'}{a.beneficiaryName}</b><br><small>To: ${'$'}{a.toBankName} (${'$'}{a.toAccountNumber})</small></td>
+                                   <td>${'$'}{a.amount}</td><td><span class="${'$'}{a.type==='CREDIT'?'credit':'debit'}">${'$'}{a.type}</span></td>
+                                   <td>${'$'}{a.paymentMode}</td>
+                                   <td><button onclick="del('deleteAccount',${'$'}{a.id})" style="color:red;border:none;cursor:pointer;background:none;">X</button></td></tr>`;
                         });
-                    }
+                        el('listA').querySelector('tbody').innerHTML = h || '<tr><td colspan="5">No Transactions for this date</td></tr>';
+                    });
+                }
+                
+                function ldH() {
+                    // FIXED: Monthly View in History Tab (matches download)
+                    fetch('/api/history'+getDParam()).then(r=>r.json()).then(d => {
+                        let all = [...(d.expenses||[]).map(x=>({...x, k:'EXP'})), ...(d.accounts||[]).map(x=>({...x, k:'ACC'}))];
+                        all.sort((a,b) => b.id - a.id);
+                        let h = '';
+                        all.forEach(i => {
+                            let dateStr = new Date(i.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+                            let desc = i.k === 'EXP' ? i.itemName : i.beneficiaryName;
+                            let amt = i.k === 'EXP' ? i.totalPrice : i.amount;
+                            h += `<tr><td>${'$'}{dateStr}</td><td>${'$'}{desc}</td><td>${'$'}{amt}</td><td><span class="${'$'}{i.type==='CREDIT'?'credit':'debit'}">${'$'}{i.type}</span></td><td>${'$'}{i.paymentMode}</td></tr>`;
+                        });
+                        el('listH').querySelector('tbody').innerHTML = h || '<tr><td colspan="5">No History for this month</td></tr>';
+                    });
                 }
 
-                function addD(){ 
-                    if(!v('d_name')||!v('d_bank')||!v('d_cat')||!v('d_item')||!v('d_price')) return alert("Fill all fields! (Including Bank)"); 
-                    post('/api/addExpense', { 
-                        personName:v('d_name'), bankName:v('d_bank'), additionalInfo:v('d_info'),
-                        category:v('d_cat'), itemName:v('d_item'), quantity:v('d_qty'), unit:v('d_unit'), price:v('d_price'), type:v('d_type'), paymentMode:radio('d_mode') 
-                    }, ldD); 
-                }
-                function addA(){ if(!v('a_hold')||!v('a_ben')||!v('a_amt')) return alert("Fill all fields!"); post('/api/addAccount', { holder:v('a_hold'), bank:v('a_bank'), accNum:v('a_anum'), benName:v('a_ben'), toBank:v('a_tbank'), toAccNum:v('a_tnum'), amount:v('a_amt'), type:v('a_type'), paymentMode:radio('a_mode') }, ldA); }
-                
-                function updCurr(){ post('/api/setCurrency', { base:v('baseCurr'), target:v('targetCurr') }, () => location.reload()); }
-                function dl(t){ let u=`/api/export?type=${'$'}{t}&screen=${'$'}{curS}`; fetch(u).then(r=>{ if(r.status===204) alert('No data!'); else window.location.href=u; }); }
-                
-                function post(u,d,cb){ fetch(u,{method:'POST', body:JSON.stringify(d)}).then(cb); }
-                function del(u,id){ if(confirm('Delete?')) post('/api/'+u, {id:id}, curS==='daily'?ldD:ldA); }
-                function v(id){ return document.getElementById(id).value; }
-                function radio(name){ return document.querySelector(`input[name="${'$'}{name}"]:checked`).value; }
-
-                ldD(); loadCats(); loadBanks();
+                loadBanks(); loadCats(); ldD();
             </script></body></html>
         """.trimIndent()
     }

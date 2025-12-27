@@ -18,10 +18,11 @@ enum class UnitType {
     @SerializedName("KG") KG,
     @SerializedName("GRAM") GRAM,
     @SerializedName("LITER") LITER,
-    @SerializedName("ML") ML
+    @SerializedName("ML") ML,
+    @SerializedName("DOZEN") DOZEN // NEW: Added Dozen Unit
 }
 
-// NEW: Stores opening balance for a specific bank on a specific date
+// Stores opening balance for a specific bank on a specific date
 @Entity(tableName = "bank_balances", primaryKeys = ["date", "bankName"])
 data class DailyBankBalance(
     @SerializedName("date") val date: Long,
@@ -40,13 +41,13 @@ data class ExpenseItem(
     @SerializedName("day") val day: String,
     @SerializedName("personName") val personName: String,
 
-    // NEW: Expenses are now tied to a bank
+    // Expenses are tied to a bank
     @SerializedName("bankName") val bankName: String,
 
-    // NEW: Additional Info
+    // Additional Info
     @SerializedName("additionalInfo") val additionalInfo: String = "",
 
-    // Kept for backward compatibility, but we will mostly rely on DailyBankBalance table now
+    // Kept for backward compatibility
     @SerializedName("openingCash") val openingCash: Double = 0.0,
     @SerializedName("openingCheque") val openingCheque: Double = 0.0,
     @SerializedName("openingCard") val openingCard: Double = 0.0,

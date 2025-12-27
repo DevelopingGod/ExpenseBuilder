@@ -3,12 +3,16 @@ package com.sankalp.expensebuilder.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CalendarToday
-import androidx.compose.material.icons.filled.Info // NEW Icon
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
@@ -21,11 +25,52 @@ import com.sankalp.expensebuilder.viewmodel.ExpenseViewModel
 
 @Composable
 fun MainScreen(viewModel: ExpenseViewModel) {
+    // Default Landing Page: Guide (Index 0)
     var selectedTab by remember { mutableIntStateOf(0) }
-    // NEW: Added 3rd Tab
-    val tabs = listOf("Daily Expense", "Accounts", "Guide")
-    val serverIp by viewModel.serverIp.collectAsState()
 
+    // Updated Tab List
+    val tabs = listOf("Guide", "Daily", "Accounts", "History", "Files")
+
+    val serverIp by viewModel.serverIp.collectAsState()
+    val showFirstRun by viewModel.showFirstRunDialog.collectAsState()
+
+    // --- FIRST RUN CURRENCY SELECTION DIALOG ---
+    if (showFirstRun) {
+        var selectedCurr by remember { mutableStateOf("USD") }
+        var exp by remember { mutableStateOf(false) }
+
+        AlertDialog(
+            onDismissRequest = {}, // Prevent dismissal without selection
+            title = { Text("Welcome! Select Currency") },
+            text = {
+                Column {
+                    Text("Please select your preferred base currency. This will be the default for your reports.")
+                    Spacer(Modifier.height(10.dp))
+                    Box {
+                        OutlinedButton(onClick = { exp = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text(selectedCurr)
+                            Icon(Icons.Default.ArrowDropDown, null)
+                        }
+                        DropdownMenu(expanded = exp, onDismissRequest = { exp = false }) {
+                            viewModel.availableCurrencies.forEach { c ->
+                                DropdownMenuItem(
+                                    text = { Text(c) },
+                                    onClick = { selectedCurr = c; exp = false }
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.setPreferredCurrency(selectedCurr) }) {
+                    Text("Save & Continue")
+                }
+            }
+        )
+    }
+
+    // --- WIFI SERVER DIALOG ---
     if (serverIp != null) {
         AlertDialog(
             onDismissRequest = { },
@@ -61,15 +106,16 @@ fun MainScreen(viewModel: ExpenseViewModel) {
                         selected = selectedTab == index,
                         onClick = { selectedTab = index },
                         icon = {
-                            // NEW: Icon logic
                             val icon = when(index) {
-                                0 -> Icons.Default.CalendarToday
-                                1 -> Icons.Default.Person
-                                else -> Icons.Default.Info
+                                0 -> Icons.Default.Info          // Guide
+                                1 -> Icons.Default.CalendarToday // Daily
+                                2 -> Icons.Default.Person        // Accounts
+                                3 -> Icons.Default.History       // History
+                                else -> Icons.Default.Folder     // Files/Downloads
                             }
                             Icon(icon, null)
                         },
-                        label = { Text(title) }
+                        label = { Text(title, style = MaterialTheme.typography.labelSmall) }
                     )
                 }
             }
@@ -77,9 +123,11 @@ fun MainScreen(viewModel: ExpenseViewModel) {
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding)) {
             when(selectedTab) {
-                0 -> DailyExpenseScreen(viewModel)
-                1 -> AccountScreen(viewModel)
-                2 -> AppGuideScreen() // NEW Screen
+                0 -> AppGuideScreen()
+                1 -> DailyExpenseScreen(viewModel)
+                2 -> AccountScreen(viewModel)
+                3 -> HistoryScreen(viewModel)   // NEW
+                4 -> DownloadsScreen(viewModel) // NEW
             }
         }
     }

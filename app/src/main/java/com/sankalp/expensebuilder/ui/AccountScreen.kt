@@ -16,6 +16,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -37,6 +38,8 @@ fun AccountScreen(viewModel: ExpenseViewModel) {
     val baseCurrency by viewModel.baseCurrency.collectAsState()
     val targetCurrency by viewModel.targetCurrency.collectAsState()
     val exchangeRate by viewModel.exchangeRate.collectAsState()
+    // Conversion Toggle State
+    val isConversionEnabled by viewModel.isConversionEnabled.collectAsState()
 
     var baseCurrExpanded by remember { mutableStateOf(false) }
     var targetCurrExpanded by remember { mutableStateOf(false) }
@@ -52,7 +55,10 @@ fun AccountScreen(viewModel: ExpenseViewModel) {
     var toAccountNumber by remember { mutableStateOf("") }
 
     var amount by remember { mutableStateOf("") }
+
+    // UPDATED: Type Selection
     var selectedType by remember { mutableStateOf(TransactionType.DEBIT) }
+    var typeExpanded by remember { mutableStateOf(false) }
 
     // --- Payment Mode State ---
     var selectedPaymentMode by remember { mutableStateOf("Cash") }
@@ -67,64 +73,95 @@ fun AccountScreen(viewModel: ExpenseViewModel) {
             Spacer(modifier = Modifier.height(10.dp))
 
             // --- DATE & CURRENCY SELECTION ---
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                // Date Picker
+            Column(modifier = Modifier.fillMaxWidth()) {
+                // Row 1: Date and Currency Selectors
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    // Date Picker
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f).background(MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small)
+                            .clickable {
+                                val calendar = Calendar.getInstance()
+                                calendar.timeInMillis = selectedDate
+                                DatePickerDialog(context, { _, y, m, d ->
+                                    val newCal = Calendar.getInstance()
+                                    newCal.set(y, m, d)
+                                    viewModel.updateDate(newCal.timeInMillis)
+                                }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
+                            }
+                            .padding(12.dp)
+                    ) {
+                        Icon(Icons.Default.CalendarToday, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(dateFormatter.format(Date(selectedDate)), style = MaterialTheme.typography.bodySmall)
+                    }
+
+                    Spacer(Modifier.width(8.dp))
+
+                    // Base Currency
+                    Box {
+                        Button(onClick = { baseCurrExpanded = true }, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            Text(baseCurrency)
+                            Icon(Icons.Default.ArrowDropDown, null)
+                        }
+                        DropdownMenu(expanded = baseCurrExpanded, onDismissRequest = { baseCurrExpanded = false }) {
+                            viewModel.availableCurrencies.forEach { cur ->
+                                DropdownMenuItem(text = { Text(cur) }, onClick = { viewModel.updateBaseCurrency(cur); baseCurrExpanded = false })
+                            }
+                        }
+                    }
+
+                    // Target Currency (Only visible if enabled)
+                    if (isConversionEnabled) {
+                        Text("→", modifier = Modifier.padding(horizontal = 4.dp))
+                        Box {
+                            Button(onClick = { targetCurrExpanded = true }, contentPadding = PaddingValues(horizontal = 8.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)) {
+                                Text(targetCurrency)
+                                Icon(Icons.Default.ArrowDropDown, null)
+                            }
+                            DropdownMenu(expanded = targetCurrExpanded, onDismissRequest = { targetCurrExpanded = false }) {
+                                viewModel.availableCurrencies.forEach { cur ->
+                                    DropdownMenuItem(text = { Text(cur) }, onClick = { viewModel.updateTargetCurrency(cur); targetCurrExpanded = false })
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Row 2: Toggle Switch & Rate
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f).background(MaterialTheme.colorScheme.surfaceVariant, shape = MaterialTheme.shapes.small)
-                        .clickable {
-                            val calendar = Calendar.getInstance()
-                            calendar.timeInMillis = selectedDate
-                            DatePickerDialog(context, { _, y, m, d ->
-                                val newCal = Calendar.getInstance()
-                                newCal.set(y, m, d)
-                                viewModel.updateDate(newCal.timeInMillis)
-                            }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)).show()
-                        }
-                        .padding(12.dp)
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.CalendarToday, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(dateFormatter.format(Date(selectedDate)), style = MaterialTheme.typography.bodySmall)
-                }
+                    Text(
+                        "Currency Converter (On/Off):",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(end = 8.dp)
+                    )
 
-                Spacer(Modifier.width(8.dp))
-
-                // Base Currency
-                Box {
-                    Button(onClick = { baseCurrExpanded = true }, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                        Text(baseCurrency)
-                        Icon(Icons.Default.ArrowDropDown, null)
-                    }
-                    DropdownMenu(expanded = baseCurrExpanded, onDismissRequest = { baseCurrExpanded = false }) {
-                        viewModel.availableCurrencies.forEach { cur ->
-                            DropdownMenuItem(text = { Text(cur) }, onClick = { viewModel.updateBaseCurrency(cur); baseCurrExpanded = false })
-                        }
-                    }
-                }
-
-                Text("→", modifier = Modifier.padding(horizontal = 4.dp))
-
-                // Target Currency
-                Box {
-                    Button(onClick = { targetCurrExpanded = true }, contentPadding = PaddingValues(horizontal = 8.dp), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)) {
-                        Text(targetCurrency)
-                        Icon(Icons.Default.ArrowDropDown, null)
-                    }
-                    DropdownMenu(expanded = targetCurrExpanded, onDismissRequest = { targetCurrExpanded = false }) {
-                        viewModel.availableCurrencies.forEach { cur ->
-                            DropdownMenuItem(text = { Text(cur) }, onClick = { viewModel.updateTargetCurrency(cur); targetCurrExpanded = false })
-                        }
+                    Switch(
+                        checked = isConversionEnabled,
+                        onCheckedChange = { viewModel.toggleConversion(it) },
+                        modifier = Modifier.scale(0.8f)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    if (isConversionEnabled) {
+                        Text(
+                            text = "1 $baseCurrency ≈ ${String.format("%.3f", exchangeRate)} $targetCurrency",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.Gray
+                        )
+                    } else {
+                        Text(
+                            text = "Currency Conversion OFF",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.Gray
+                        )
                     }
                 }
             }
-            // Show Exchange Rate
-            Text(
-                text = "Rate: 1 $baseCurrency ≈ ${String.format("%.3f", exchangeRate)} $targetCurrency",
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.Gray,
-                modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 10.dp)
-            )
+            Spacer(modifier = Modifier.height(10.dp))
         }
 
         // --- INPUT FORM ---
@@ -142,12 +179,35 @@ fun AccountScreen(viewModel: ExpenseViewModel) {
 
             Spacer(Modifier.height(16.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                // Dynamic Label based on Selection
-                OutlinedTextField(value = amount, onValueChange = { amount = it }, label = { Text("Amount ($baseCurrency)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                // Amount Field
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { amount = it },
+                    label = { Text("Amount ($baseCurrency)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.weight(1f)
+                )
+
                 Spacer(Modifier.width(8.dp))
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Switch(checked = selectedType == TransactionType.CREDIT, onCheckedChange = { selectedType = if (it) TransactionType.CREDIT else TransactionType.DEBIT })
-                    Text(text = if(selectedType == TransactionType.CREDIT) "Credit" else "Debit", color = if(selectedType == TransactionType.CREDIT) Color.Green else Color.Black, style = MaterialTheme.typography.labelSmall)
+
+                // UPDATED: Dropdown for Credit/Debit (Consistent UI)
+                Box(modifier = Modifier.weight(0.8f)) {
+                    OutlinedTextField(
+                        value = selectedType.name,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Type") },
+                        modifier = Modifier.fillMaxWidth(),
+                        trailingIcon = { Icon(Icons.Default.ArrowDropDown, null, Modifier.clickable { typeExpanded = true }) },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = if (selectedType == TransactionType.CREDIT) Color.Green else Color.Red,
+                            unfocusedTextColor = if (selectedType == TransactionType.CREDIT) Color.Green else Color.Red
+                        )
+                    )
+                    DropdownMenu(expanded = typeExpanded, onDismissRequest = { typeExpanded = false }) {
+                        DropdownMenuItem(text = { Text("DEBIT", color = Color.Red) }, onClick = { selectedType = TransactionType.DEBIT; typeExpanded = false })
+                        DropdownMenuItem(text = { Text("CREDIT", color = Color.Green) }, onClick = { selectedType = TransactionType.CREDIT; typeExpanded = false })
+                    }
                 }
             }
 
