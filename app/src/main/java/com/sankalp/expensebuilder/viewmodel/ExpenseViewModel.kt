@@ -204,7 +204,7 @@ class ExpenseViewModel(application: Application) : AndroidViewModel(application)
     // --- CATEGORIES ---
     private val defaultCategories = listOf(
         "Home Expenses", "Snacks & Fruit", "Utilities", "CNG/Petrol",
-        "Assets", "Medical Expenses", "Education Expenses", "Rent", "Loans", "Others"
+        "Assets", "Luxury", "Medical Expenses", "Education Expenses", "Rent", "Flights", "Electronics", "Hotel","Groceries", "Others"
     )
 
     val savedCategories: Flow<List<String>> = dao.getAllCategories().map { dbCategories ->

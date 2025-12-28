@@ -9,9 +9,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -267,7 +270,8 @@ fun BankBalanceRow(bank: DailyBankBalance, currency: String, onDelete: () -> Uni
     }
 }
 
-// --- Form with Credit/Debit Dropdown ---
+// --- Form with Executive Dropdowns (ExposedDropdownMenuBox) ---
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ExpenseInputForm(
     viewModel: ExpenseViewModel,
@@ -306,34 +310,71 @@ fun ExpenseInputForm(
     Column {
         OutlinedTextField(value = personName, onValueChange = { personName = it }, label = { Text("Person Name") }, modifier = Modifier.fillMaxWidth())
 
-        Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Spacer(Modifier.height(8.dp))
+
+        // --- EXECUTIVE STYLE: BANK SELECTOR ---
+        ExposedDropdownMenuBox(
+            expanded = bankExpanded,
+            onExpandedChange = { bankExpanded = !bankExpanded },
+            modifier = Modifier.fillMaxWidth()
+        ) {
             OutlinedTextField(
-                value = selectedBank, onValueChange = {}, readOnly = true, label = { Text("Select Bank / Source") }, modifier = Modifier.fillMaxWidth(),
-                trailingIcon = { Icon(Icons.Default.ArrowDropDown, null, Modifier.clickable { bankExpanded = true }) }
+                value = selectedBank,
+                onValueChange = {},
+                readOnly = true,
+                label = { Text("Select Bank / Source") },
+                leadingIcon = { Icon(Icons.Default.AccountBalance, contentDescription = null) },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = bankExpanded) },
+                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                modifier = Modifier.menuAnchor().fillMaxWidth()
             )
-            DropdownMenu(expanded = bankExpanded, onDismissRequest = { bankExpanded = false }) {
+            ExposedDropdownMenu(
+                expanded = bankExpanded,
+                onDismissRequest = { bankExpanded = false }
+            ) {
                 if (bankBalances.isEmpty()) {
                     DropdownMenuItem(text = { Text("No Banks Added") }, onClick = { bankExpanded = false })
                 }
                 bankBalances.forEach { b ->
-                    DropdownMenuItem(text = { Text(b.bankName) }, onClick = { selectedBank = b.bankName; bankExpanded = false })
+                    DropdownMenuItem(
+                        text = { Text(b.bankName) },
+                        onClick = { selectedBank = b.bankName; bankExpanded = false }
+                    )
                 }
             }
         }
 
-        Row(Modifier.fillMaxWidth()) {
-            Box(Modifier.weight(1f)) {
-                OutlinedTextField(
-                    value = category, onValueChange = { category = it }, label = { Text("Category") }, modifier = Modifier.fillMaxWidth(),
-                    trailingIcon = { Icon(Icons.Default.ArrowDropDown, "Select", Modifier.clickable { catExpanded = true }) }
-                )
-                DropdownMenu(expanded = catExpanded, onDismissRequest = { catExpanded = false }) {
-                    categories.forEach { cat -> DropdownMenuItem(text = { Text(cat) }, onClick = { category = cat; catExpanded = false }) }
+        Spacer(Modifier.height(8.dp))
+
+        // --- EXECUTIVE STYLE: CATEGORY SELECTOR ---
+        ExposedDropdownMenuBox(
+            expanded = catExpanded,
+            onExpandedChange = { catExpanded = !catExpanded },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            OutlinedTextField(
+                value = category,
+                onValueChange = { category = it },
+                label = { Text("Category") },
+                leadingIcon = { Icon(Icons.Default.Category, contentDescription = null) },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = catExpanded) },
+                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                modifier = Modifier.menuAnchor().fillMaxWidth()
+            )
+            ExposedDropdownMenu(
+                expanded = catExpanded,
+                onDismissRequest = { catExpanded = false }
+            ) {
+                categories.forEach { cat ->
+                    DropdownMenuItem(
+                        text = { Text(cat) },
+                        onClick = { category = cat; catExpanded = false }
+                    )
                 }
             }
         }
 
-        OutlinedTextField(value = itemName, onValueChange = { itemName = it; viewModel.fetchSuggestions(category, it) }, label = { Text("Item Name") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = itemName, onValueChange = { itemName = it; viewModel.fetchSuggestions(category, it) }, label = { Text("Item Name") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
 
         if (suggestions.isNotEmpty()) {
             Row(modifier = Modifier.padding(4.dp)) {
@@ -345,16 +386,39 @@ fun ExpenseInputForm(
             }
         }
 
-        OutlinedTextField(value = additionalInfo, onValueChange = { additionalInfo = it }, label = { Text("Additional Info (Optional)") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = additionalInfo, onValueChange = { additionalInfo = it }, label = { Text("Additional Info (Optional)") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+
+        Spacer(Modifier.height(8.dp))
 
         Row(Modifier.fillMaxWidth()) {
             Column(Modifier.weight(1f)) {
                 OutlinedTextField(value = quantity, onValueChange = { quantity = it }, label = { Text("Qty") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                Spacer(Modifier.height(4.dp))
-                Box(Modifier.fillMaxWidth()) {
-                    OutlinedTextField(value = selectedUnit.name, onValueChange = {}, readOnly = true, label = { Text("Unit") }, modifier = Modifier.fillMaxWidth(), trailingIcon = { Icon(Icons.Default.ArrowDropDown, null, Modifier.clickable { unitExpanded = true }) })
-                    DropdownMenu(expanded = unitExpanded, onDismissRequest = { unitExpanded = false }) {
-                        UnitType.values().forEach { u -> DropdownMenuItem(text = { Text(u.name) }, onClick = { selectedUnit = u; unitExpanded = false }) }
+
+                Spacer(Modifier.height(8.dp))
+
+                // --- EXECUTIVE STYLE: UNIT SELECTOR ---
+                ExposedDropdownMenuBox(
+                    expanded = unitExpanded,
+                    onExpandedChange = { unitExpanded = !unitExpanded },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value = selectedUnit.name,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Unit") },
+                        leadingIcon = { Icon(Icons.Default.Straighten, contentDescription = null) }, // Using Straighten as Scale alternative
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = unitExpanded) },
+                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = unitExpanded,
+                        onDismissRequest = { unitExpanded = false }
+                    ) {
+                        UnitType.values().forEach { u ->
+                            DropdownMenuItem(text = { Text(u.name) }, onClick = { selectedUnit = u; unitExpanded = false })
+                        }
                     }
                 }
             }
@@ -363,30 +427,45 @@ fun ExpenseInputForm(
 
             Column(Modifier.weight(1f)) {
                 OutlinedTextField(value = price, onValueChange = { price = it }, label = { Text("Price ($baseCurrency)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                Spacer(Modifier.height(4.dp))
 
-                Box(Modifier.fillMaxWidth()) {
+                Spacer(Modifier.height(8.dp))
+
+                // --- EXECUTIVE STYLE: TYPE SELECTOR ---
+                ExposedDropdownMenuBox(
+                    expanded = typeExpanded,
+                    onExpandedChange = { typeExpanded = !typeExpanded },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     OutlinedTextField(
                         value = selectedType.name,
                         onValueChange = {},
                         readOnly = true,
                         label = { Text("Type") },
-                        modifier = Modifier.fillMaxWidth(),
-                        trailingIcon = { Icon(Icons.Default.ArrowDropDown, null, Modifier.clickable { typeExpanded = true }) },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = if (selectedType == TransactionType.CREDIT) Color.Green else Color.Red,
-                            unfocusedTextColor = if (selectedType == TransactionType.CREDIT) Color.Green else Color.Red
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = typeExpanded) },
+                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                        colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(
+                            focusedTextColor = if (selectedType == TransactionType.CREDIT) Color(0xFF2E7D32) else Color(0xFFC62828),
+                            unfocusedTextColor = if (selectedType == TransactionType.CREDIT) Color(0xFF2E7D32) else Color(0xFFC62828)
                         )
                     )
-                    DropdownMenu(expanded = typeExpanded, onDismissRequest = { typeExpanded = false }) {
-                        DropdownMenuItem(text = { Text("DEBIT", color = Color.Red) }, onClick = { selectedType = TransactionType.DEBIT; typeExpanded = false })
-                        DropdownMenuItem(text = { Text("CREDIT", color = Color.Green) }, onClick = { selectedType = TransactionType.CREDIT; typeExpanded = false })
+                    ExposedDropdownMenu(
+                        expanded = typeExpanded,
+                        onDismissRequest = { typeExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("DEBIT", color = Color(0xFFC62828), fontWeight = FontWeight.Bold) },
+                            onClick = { selectedType = TransactionType.DEBIT; typeExpanded = false }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("CREDIT", color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold) },
+                            onClick = { selectedType = TransactionType.CREDIT; typeExpanded = false }
+                        )
                     }
                 }
             }
         }
 
-        Text("Payment Mode:", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 8.dp))
+        Text("Payment Mode:", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 12.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             paymentOptions.forEach { option ->
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { selectedPaymentMode = option }) {
@@ -414,7 +493,7 @@ fun ExpenseInputForm(
                     itemName = ""; quantity = ""; price = ""; additionalInfo = ""
                 }
             },
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
         ) { Text("ADD ENTRY") }
     }
 }

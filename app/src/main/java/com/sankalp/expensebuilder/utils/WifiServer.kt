@@ -670,7 +670,7 @@ class WifiServer(
                 }
                 
                 function loadBanks() { fetch('/api/banks'+getDParam()).then(r=>r.json()).then(d=>{ let h=d.length?'':'<option>No Banks</option>'; d.forEach(b=>h+=`<option>${'$'}{b.bankName}</option>`); el('db').innerHTML=h; }); }
-                function loadCats() { fetch('/api/categories').then(r=>r.json()).then(d=>{ let h=''; [...new Set(["Home Expenses","Snacks & Fruit","Utilities","CNG/Petrol","Assets","Medical Expenses","Education Expenses","Rent","Loans","Others",...d])].sort().forEach(c=>h+=`<option>${'$'}{c}</option>`); el('dc').innerHTML=h; }); }
+                function loadCats() { fetch('/api/categories').then(r=>r.json()).then(d=>{ let h=''; [...new Set(["Home Expenses","Snacks & Fruit","Utilities","CNG/Petrol","Assets","Medical Expenses","Education Expenses","Rent","Loans","Flights", "Hotel", "Groceries", "Electronics", "Others",...d])].sort().forEach(c=>h+=`<option>${'$'}{c}</option>`); el('dc').innerHTML=h; }); }
                 
                 function ldD() {
                     Promise.all([fetch('/api/expenses'+getDParam()).then(r=>r.json()), fetch('/api/banks'+getDParam()).then(r=>r.json())]).then(([ex, bk]) => {
